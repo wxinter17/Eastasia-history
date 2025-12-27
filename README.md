@@ -1,6 +1,6 @@
-# 东亚历史交互地图系统 (East Asia History Interactive Map)
+# 东亚历史交互地图 (East Asia History Interactive Map)
 
-这是一个基于 Web 技术构建的交互式历史地图项目，旨在可视化展示东亚地区（公元前 200 年至今）的历史政权疆域演变与地缘政治关系。
+这是一个基于 Web 技术构建的交互式历史地图项目，旨在可视化展示东亚地区（公元前2070年至今）的历史政权疆域演变与地缘政治关系。
 
 ## 🌍 项目概览
 
@@ -33,7 +33,7 @@
 **版本信息 (v3.01)**
 *   Index Core: v3.01
 *   Map Engine: v14.01
-*   Viz Engine: v87.01
+*   Panorama Engine: v87.01
 
 ## 🚀 快速开始
 
