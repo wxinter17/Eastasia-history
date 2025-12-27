@@ -730,11 +730,6 @@
                     if (type === 'CMD_JUMP') {
                         this.handleJump(payload);
                     }
-
-                    // 8. 同步滚动指令
-                    if (type === 'CMD_SCROLL_TO_YEAR') {
-                        if (window.scrollToYear) window.scrollToYear(payload);
-                    }
                 });
 
                 // Notify parent
@@ -1842,27 +1837,6 @@
         const collisionMgr = { rects: [], add: function (x, y, w, h, tier) { const n = { l: x + 1, t: y + 1, r: x + w - 1, b: y + h - 1 }; if (tier <= 1) { this.rects.push(n); return true; } for (let r of this.rects) if (n.l < r.r && n.r > r.l && n.t < r.b && n.b > r.t) return false; this.rects.push(n); return true; }, reset: function () { this.rects = [] } };
 
         document.addEventListener('DOMContentLoaded', () => Core.init());
-        // [Sync] 暴露给父级的同步 API
-        window.getCenterYear = function () {
-            const el = document.getElementById('main-content');
-            if (!el || !Core || !Core.state) return 2025;
-            const zoom = Core.state.zoom || 1.5;
-            // 计算中心点对应的年份： APP_CONFIG.minYear + (scrollTop + clientH/2) / zoom
-            const midPx = el.scrollTop + (el.clientHeight / 2);
-            const year = APP_CONFIG.minYear + (midPx / zoom);
-            return Math.round(year);
-        };
-
-        window.scrollToYear = function (year) {
-            if (typeof year !== 'number' || isNaN(year)) return;
-            const el = document.getElementById('main-content');
-            if (!el || !Core || !Core.state) return;
-
-            const zoom = Core.state.zoom || 1.5;
-            const targetPx = (year - APP_CONFIG.minYear) * zoom;
-            const centerOffset = el.clientHeight / 2;
-            el.scrollTo({ top: targetPx - centerOffset, behavior: 'auto' }); // auto 更快，smooth 可能有延迟
-        };
     </script>
 </body>
 

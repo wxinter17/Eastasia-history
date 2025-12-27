@@ -708,7 +708,9 @@
                             <input type="password" id="gemini-key" class="api-input" placeholder="在此粘贴 Key"
                                 onchange="window.EastAsiaApp.saveApiKey(this.value)">
                         </div>
-                        <a onclick="window.GlobalUtils.showAbout()">ℹ️ 关于项目</a>
+                        <a
+                            onclick="alert('EastAsia History Map\n\nCore: v2.85\nMap Engine: v2.85\nViz Engine: v2.85\n\nLast Updated: 2025-12-27')">ℹ️
+                            关于项目</a>
                         <a onclick="window.EastAsiaApp.refreshData()">🔄 刷新数据 (强制重载)</a>
                         <a onclick="window.EastAsiaApp.clearCache()">🗑️ 清除缓存</a>
                         <a onclick="window.EastAsiaApp.toggleLegend(event)">📖 图例面板</a>
@@ -874,7 +876,6 @@
     `;
 
         const GLOBAL_CONFIG = {
-            VERSIONS: { INDEX: "v3.01", MAP: "v14.01", PANO: "v87.01" },
             TIME: { MIN_YEAR: -2100, MAX_YEAR: 2025, CURRENT_YEAR: new Date().getFullYear(), DEFAULT_START: -200, PRESENT_YEAR: 2025 },
             FALLBACK_STYLE: { bg: '#666', border: '#444', className: 'texture-C', isDashed: false, textColor: '#fff' }
         };
@@ -907,10 +908,6 @@
             safeExec: function (fn, context) {
                 try { if (typeof fn === 'function') fn.call(context || this); else console.error("safeExec called with non-function"); }
                 catch (e) { console.error(`操作失败: ${e.message}`); }
-            },
-            showAbout: function () {
-                const v = GLOBAL_CONFIG.VERSIONS;
-                alert(`EastAsia History Map\n\nCore (index): ${v.INDEX}\nMap Engine: ${v.MAP}\nViz Engine: ${v.PANO}\n\nLast Updated: 2025-12-27\n\nOptimization Phase 1&2 Completed.`);
             }
         };
 
@@ -1305,18 +1302,6 @@
 
             switchView: function (view) {
                 if (view === this.state.currentView) return;
-
-                // [Sync] 1. 切换前：尝试捕获当前视图的中心年份
-                let syncYear = null;
-                const oldView = this.state.currentView;
-                try {
-                    const oldFrame = document.getElementById(oldView === 'map' ? 'iframe-map' : 'iframe-panorama');
-                    // 约定：子页面必须挂载 getCenterYear 方法到 window 上
-                    if (oldFrame && oldFrame.contentWindow && typeof oldFrame.contentWindow.getCenterYear === 'function') {
-                        syncYear = oldFrame.contentWindow.getCenterYear();
-                    }
-                } catch (e) { console.warn(`[Sync] Failed to get start year from ${oldView}`, e); }
-
                 this.state.currentView = view;
 
                 const mapFrame = document.getElementById('iframe-map');
@@ -1335,13 +1320,6 @@
                     mapFrame.classList.add('view-hidden'); mapFrame.classList.remove('view-active');
                     btnPano.classList.add('active'); btnMap.classList.remove('active');
                     quickNav.style.display = 'block';
-                }
-
-                // [Sync] 2. 切换后：将年份指令发给新视图
-                if (syncYear !== null) {
-                    setTimeout(() => {
-                        this.broadcast('CMD_SCROLL_TO_YEAR', syncYear);
-                    }, 50);
                 }
             },
 

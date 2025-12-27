@@ -1236,16 +1236,12 @@
                                     MapCtrl.map.flyTo(layer.getBounds().getCenter(), 6);
                                     // 模拟点击触发详情，注意参数传递
                                     if (MapCtrl.handleRegionClick) {
+                                        // 构造一个模拟的 item 对象
                                         MapCtrl.handleRegionClick({ code: payload.region, name: '搜索结果' }, layer);
                                     }
                                 }
                             }, 500);
                         }
-                    }
-
-                    // 6. 纯滚动同步 (不选中任何政权，只跳转时间)
-                    if (type === 'CMD_SCROLL_TO_YEAR') {
-                        if (window.scrollToYear) window.scrollToYear(payload);
                     }
 
                     // 6. 仿古模式开关监听
@@ -2593,40 +2589,6 @@
         window.UICtrl = UICtrl;
 
         window.addEventListener('load', () => App.init());
-        // [Sync] 暴露给父级的同步 API
-        window.getCenterYear = function () {
-            if (!State || typeof State.currentYear === 'undefined') return 2025;
-            // 优先返回 State 中的当前年份（因为 TimelineCtrl 滚动时会实时更新它）
-            return State.currentYear;
-        };
-
-        window.scrollToYear = function (year) {
-            if (typeof year !== 'number' || isNaN(year)) return;
-            if (!State || typeof State.timelineMinYear === 'undefined') return;
-
-            // 调用 TimelineCtrl 更新视图
-            // 如果 TimelineCtrl 还没初始化，或者数据还没加载，可能无法滚动，做个简单的检查
-            const scroller = document.getElementById('waterfall-scroll');
-            if (scroller && CONFIG && CONFIG.pixelsPerYear) {
-                const minYear = State.timelineMinYear;
-                const targetPx = (year - minYear) * CONFIG.pixelsPerYear;
-                // 减去视口高度的一半，使目标年份居中
-                const centerOffset = scroller.clientHeight / 2;
-                scroller.scrollTop = targetPx - centerOffset;
-
-                // 强制更新 State 和高亮，防止不同步
-                State.currentYear = year;
-
-                // [Fix] 显式更新游标文字
-                const cursorBtn = document.getElementById('cursor-year-btn');
-                if (cursorBtn) cursorBtn.innerText = year;
-
-                if (MapCtrl && MapCtrl.updateHighlight) MapCtrl.updateHighlight(year);
-            }
-        };
-
-        // 监听 postMessage 也可以触发
-        // (这部分逻辑已经在 App.handleMessage 里处理跳转了，但为了更纯粹的滚动，可以在 handleMessage 里加一个分支)
     </script>
 </body>
 
