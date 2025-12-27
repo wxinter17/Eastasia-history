@@ -1,0 +1,1843 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>东亚历史全景 (v87.00)</title>
+    <!-- [Unified CSS] Native Style (Merged) -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700;900&family=Inter:wght@400;600&display=swap"
+        rel="stylesheet">
+    <style id="dynamic-styles"></style>
+
+    <style>
+        /* =========================================
+           EastAsia History - Standard Styles (v1.0)
+           Replaces Tailwind CSS with native CSS
+           ========================================= */
+
+        :root {
+            --slate-50: #f8fafc;
+            --slate-100: #f1f5f9;
+            --slate-200: #e2e8f0;
+            --slate-300: #cbd5e1;
+            --slate-400: #94a3b8;
+            --slate-500: #64748b;
+            --slate-600: #475569;
+            --slate-700: #334155;
+            --slate-800: #1e293b;
+            --slate-900: #0f172a;
+            --slate-950: #020617;
+
+            --blue-300: #93c5fd;
+            --blue-400: #60a5fa;
+            --blue-500: #3b82f6;
+            --blue-600: #2563eb;
+
+            --amber-300: #fcd34d;
+            --amber-500: #f59e0b;
+        }
+
+        /* --- 基础设置 --- */
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--slate-900);
+            color: var(--slate-300);
+            font-family: 'Inter', -apple-system, sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .pano-body {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            font-size: 14px;
+            background: var(--slate-950);
+        }
+
+        #main-content {
+            position: relative;
+            width: 100%;
+            height: calc(100% - 3rem);
+            overflow: auto;
+            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
+            z-index: 1;
+            will-change: scroll-position;
+        }
+
+        #chart-container {
+            position: relative;
+            min-width: 1400px;
+            display: block;
+            contain: layout;
+        }
+
+        /* --- Sticky 布局 --- */
+        #sticky-header-row {
+            position: sticky;
+            top: 0;
+            z-index: 200;
+            display: flex;
+            height: 2.5rem;
+            border-bottom: 1px solid var(--slate-700);
+            background-color: var(--slate-900);
+        }
+
+        #header-corner {
+            position: sticky;
+            left: 0;
+            z-index: 210;
+            width: 3.5rem;
+            flex-shrink: 0;
+            background-color: var(--slate-900);
+            border-right: 1px solid var(--slate-700);
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.5);
+        }
+
+        #header-body {
+            flex: 1;
+            display: flex;
+            background-color: var(--slate-900);
+            position: relative;
+        }
+
+        #chart-body-row {
+            display: flex;
+            position: relative;
+        }
+
+        .sticky-ticks {
+            position: sticky;
+            left: 0;
+            z-index: 190;
+            width: 3.5rem;
+            flex-shrink: 0;
+            background-color: var(--slate-900);
+            border-right: 1px solid var(--slate-700);
+            box-shadow: 4px 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        #render-area {
+            flex: 1;
+            position: relative;
+            background-color: var(--slate-900);
+            overflow: hidden;
+        }
+
+        /* --- Block Styles --- */
+        .era-block-fragment {
+            position: absolute;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            z-index: 10;
+            box-sizing: border-box;
+            transition: transform 0.1s ease, opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1), filter 0.4s ease;
+        }
+
+        .no-border-left {
+            border-left: none !important;
+        }
+
+        .no-border-right {
+            border-right: none !important;
+        }
+
+        body:not(.mode-focus) .era-block-fragment:hover {
+            z-index: 50 !important;
+            filter: brightness(1.2) contrast(1.1);
+            transform: scaleY(1.02);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+        }
+
+        .group-hovered {
+            filter: brightness(1.2) contrast(1.1) !important;
+            opacity: 1 !important;
+            z-index: 40 !important;
+        }
+
+        /* --- Focus Mode --- */
+        body.mode-focus .era-block-fragment:not(.is-focused) {
+            opacity: 0.08 !important;
+            filter: grayscale(100%) !important;
+            pointer-events: none !important;
+            border-color: transparent !important;
+        }
+
+        body.mode-focus .era-block-fragment.is-focused {
+            opacity: 1 !important;
+            filter: none !important;
+            z-index: 100 !important;
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9), 0 10px 40px rgba(0, 0, 0, 0.9) !important;
+            transform: scale(1.005);
+        }
+
+        .era-dimmed {
+            opacity: 0.1 !important;
+            filter: grayscale(100%) !important;
+            pointer-events: none;
+        }
+
+        /* --- Labels --- */
+        .era-label {
+            position: absolute;
+            z-index: 60;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.95);
+            transform: translate(-50%, -50%);
+            line-height: 1.1;
+            text-shadow: -1px -1px 0 #000, 1px 1px 0 #000, 0 2px 4px rgba(0, 0, 0, 0.9);
+            white-space: nowrap;
+            transition: opacity 0.4s, filter 0.4s, transform 0.3s;
+        }
+
+        body.mode-focus .era-label:not(.is-focused) {
+            opacity: 0.05 !important;
+            filter: blur(2px) grayscale(100%) !important;
+        }
+
+        body.mode-focus .era-label.is-focused {
+            opacity: 1 !important;
+            filter: none !important;
+            z-index: 101 !important;
+            transform: translate(-50%, -50%) scale(1.1);
+        }
+
+        .vertical-text {
+            writing-mode: vertical-rl;
+            text-orientation: upright;
+            letter-spacing: 1px;
+        }
+
+        .label-wrap {
+            white-space: normal !important;
+            word-break: break-word;
+            line-height: 1.2 !important;
+        }
+
+        .label-tier-1 {
+            font-family: 'Ma Shan Zheng', cursive;
+            font-weight: 400;
+            letter-spacing: 2px;
+            z-index: 70;
+        }
+
+        .label-tier-2 {
+            font-family: 'Noto Serif SC', serif;
+            font-weight: 900;
+            z-index: 65;
+        }
+
+        .label-tier-3 {
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            z-index: 60;
+        }
+
+        /* --- Panel & Modals --- */
+        /* Editor Panel (Replaces Tailwind classes) */
+        #editor-panel {
+            position: fixed;
+            top: 3rem;
+            bottom: 0;
+            width: 100%;
+            z-index: 400;
+            display: flex;
+            flex-direction: column;
+            background-color: rgba(15, 23, 42, 0.95);
+            /* slate-900/95 */
+            backdrop-filter: blur(12px);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @media (min-width: 640px) {
+            #editor-panel {
+                width: 24rem;
+            }
+        }
+
+        .panel-right {
+            right: 0;
+            border-left: 1px solid var(--slate-700);
+            transform: translateX(100%);
+        }
+
+        .panel-left {
+            left: 0;
+            border-right: 1px solid var(--slate-700);
+            transform: translateX(-100%);
+        }
+
+        .panel-open {
+            transform: translateX(0) !important;
+        }
+
+        .panel-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--slate-700);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: rgba(30, 41, 59, 0.5);
+        }
+
+        .panel-title {
+            font-weight: bold;
+            color: var(--blue-400);
+        }
+
+        .panel-close-btn {
+            color: var(--slate-400);
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            background: rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+            border: none;
+        }
+
+        .panel-close-btn:hover {
+            color: white;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .jump-btn {
+            display: none;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.75rem;
+            background-color: var(--blue-600);
+            color: white;
+            padding: 0.375rem 0.75rem;
+            border-radius: 9999px;
+            border: 1px solid rgba(96, 165, 250, 0.5);
+            cursor: pointer;
+        }
+
+        .jump-btn:hover {
+            background-color: var(--blue-500);
+        }
+
+        .jump-btn.active-btn {
+            display: flex;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+
+        /* Selection Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            z-index: 9999;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background-color: var(--slate-900);
+            border: 1px solid var(--slate-700);
+            border-radius: 0.75rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            max-width: 24rem;
+            overflow: hidden;
+        }
+
+        .modal-header {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--slate-800);
+            background-color: rgba(30, 41, 59, 0.5);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 0.75rem;
+            font-weight: bold;
+            color: var(--slate-400);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .modal-close {
+            width: 2rem;
+            height: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 9999px;
+            color: var(--slate-500);
+            cursor: pointer;
+            border: none;
+            background: transparent;
+        }
+
+        .modal-close:hover {
+            color: white;
+            background-color: var(--slate-700);
+        }
+
+        /* --- JS Dynamic Elements Utilities --- */
+        .header-col-label {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            border-right: 1px solid rgba(51, 65, 85, 0.3);
+            /* slate-700/30 */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 0 2px;
+            font-size: 10px;
+            cursor: help;
+            color: var(--slate-400);
+            line-height: 1.25;
+            word-break: break-word;
+            white-space: normal;
+        }
+
+        .header-col-label:hover {
+            color: var(--blue-400);
+        }
+
+        .timeline-tick-label {
+            position: absolute;
+            width: 100%;
+            text-align: right;
+            padding-right: 0.5rem;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            line-height: 1;
+            font-size: 10px;
+            color: var(--slate-500);
+            font-family: monospace;
+            height: 0;
+        }
+
+        .suzerain-tag {
+            margin-top: 0.5rem;
+            font-size: 11px;
+            color: var(--amber-300);
+            border: 1px solid rgba(245, 158, 11, 0.5);
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            display: inline-block;
+            line-height: 1.6;
+        }
+
+        /* Detail Panel Elements */
+        .regime-card {
+            padding: 1.25rem;
+            border-radius: 0.5rem;
+            text-align: center;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+
+        .regime-card-title {
+            font-size: 1.875rem;
+            font-weight: 900;
+            position: relative;
+            z-index: 10;
+            font-family: serif;
+            margin: 0;
+        }
+
+        .regime-info-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            opacity: 0.9;
+            font-size: 0.75rem;
+            z-index: 10;
+            position: relative;
+            font-family: monospace;
+        }
+
+        .info-badge {
+            background-color: rgba(0, 0, 0, 0.2);
+            padding: 0 0.25rem;
+            border-radius: 0.25rem;
+        }
+
+        .section-box {
+            background-color: rgba(30, 41, 59, 0.5);
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--slate-700);
+        }
+
+        .section-title {
+            font-size: 0.75rem;
+            font-weight: bold;
+            color: var(--slate-500);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.75rem;
+            border-bottom: 1px solid var(--slate-700);
+            padding-bottom: 0.5rem;
+        }
+
+        .region-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            height: 1.5rem;
+            padding: 0 0.5rem;
+            border-radius: 0.25rem;
+            margin-bottom: 0.25rem;
+            transition: background 0.2s;
+            font-size: 10px;
+            color: var(--slate-300);
+        }
+
+        .region-row:hover {
+            background-color: rgba(51, 65, 85, 0.3);
+        }
+
+        .region-row.active-row {
+            background-color: rgba(59, 130, 246, 0.3);
+            border: 1px solid rgba(59, 130, 246, 0.5);
+        }
+
+        .region-name {
+            width: 5rem;
+            text-align: right;
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .region-name.active-name {
+            color: var(--blue-300);
+        }
+
+        .bar-container {
+            flex: 1;
+            height: 0.5rem;
+            background-color: rgba(51, 65, 85, 0.5);
+            border-radius: 0.25rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .time-text {
+            width: 6rem;
+            font-family: monospace;
+            font-size: 9px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Search Results */
+        #search-results {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 4px;
+            background: var(--slate-800);
+            border: 1px solid var(--slate-700);
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.9);
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 9999;
+            display: none;
+            width: 240px;
+        }
+
+        .search-item {
+            padding: 0.6rem 1rem;
+            cursor: pointer;
+            border-bottom: 1px solid var(--slate-700);
+            transition: background 0.15s;
+            color: var(--slate-300);
+            font-size: 0.75rem;
+        }
+
+        .search-item:hover {
+            background: var(--slate-700);
+        }
+    </style>
+</head>
+
+<body class="pano-body">
+
+    <div id="editor-panel" class="panel-right">
+        <div class="panel-header">
+            <h2 class="panel-title">📜 政权详情</h2>
+
+            <div class="flex items-center gap-2" style="display:flex; gap:0.5rem; align-items:center;">
+                <button id="btn-jump-map-header" class="jump-btn">
+                    <span>🗺️</span> 查看历史地图
+                </button>
+                <button id="btn-close-panel" class="panel-close-btn">✕</button>
+            </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-5 custom-scrollbar" id="editor-content"
+            style="padding:1.25rem; overflow-y:auto; flex:1;"></div>
+    </div>
+
+    <div id="selection-modal" class="modal-overlay">
+        <div class="modal-content animate-in fade-in zoom-in duration-200">
+            <div class="modal-header">
+                <span class="modal-title">请选择政权</span>
+                <button id="btn-close-modal" class="modal-close">✕</button>
+            </div>
+            <div id="selection-list" class="custom-scrollbar"
+                style="padding:0.5rem; max-height:60vh; overflow-y:auto; display:flex; flex-direction:column; gap:0.25rem;">
+            </div>
+        </div>
+    </div>
+
+    <div id="main-content">
+        <div id="chart-container">
+            <div id="sticky-header-row">
+                <div id="header-corner"></div>
+                <div id="header-body"></div>
+            </div>
+            <div id="chart-body-row">
+                <div id="ticks-layer" class="sticky-ticks">
+                    <div id="crosshair-label"></div>
+                </div>
+                <div id="render-area">
+                    <div id="crosshair-line"></div>
+                    <svg id="connections-layer" width="100%" height="100%"></svg>
+                    <div id="blocks-layer" class="absolute inset-0 z-10"></div>
+                    <div id="labels-layer" class="absolute inset-0 z-20 pointer-events-none"></div>
+                    <div id="grid-layer" class="absolute inset-0 z-0 pointer-events-none"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 从父级获取年份配置，如果父级不可用则使用本地默认值
+        const TIME_CONFIG = window.parent?.GLOBAL_CONFIG?.TIME || {
+            MIN_YEAR: -2100,
+            MAX_YEAR: 2025
+        };
+
+        const APP_CONFIG = {
+            minYear: TIME_CONFIG.MIN_YEAR,
+            maxYear: TIME_CONFIG.MAX_YEAR
+        };
+
+        const Core = {
+            state: { regions: [], regionIndexMap: {}, regimeGroups: [], zoom: 1.5, rawData: [], features: { connections: true }, focusedGroupId: null, lastClickedGeoCode: null, layoutCache: {}, intraColumnCache: {} },
+
+            init: function () {
+                window.addEventListener('message', (e) => {
+                    // 【关键修复】安全阀
+                    if (!e.data || typeof e.data !== 'object') return;
+
+                    const { type, payload = {} } = e.data;
+
+                    // Debug
+                    if (type === 'CMD_RESET') console.log("📜 全景页收到复位指令!");
+
+                    // 2. 初始化数据与样式注入
+                    if (type === 'INIT_DATA') {
+                        const { data, sharedCSS } = payload;
+
+                        // [关键修复] 注入父级发来的 CSS (解决 texture-V/J 虚线和网格不显示的问题)
+                        if (sharedCSS) {
+                            const styleEl = document.getElementById('dynamic-styles');
+                            if (styleEl) styleEl.innerHTML = sharedCSS;
+                        }
+
+                        // 处理核心数据
+                        if (data) {
+                            this.processData(data);
+                        } else {
+                            console.warn("Panorama: INIT_DATA received but data is empty");
+                        }
+                    }
+
+                    // 3. 缩放控制
+                    if (type === 'CMD_ZOOM_IN') {
+                        this.state.zoom = Math.min(this.state.zoom + 0.5, 10);
+                        this.updateLayout(); // 重新计算布局并渲染
+                    }
+                    if (type === 'CMD_ZOOM_OUT') {
+                        this.state.zoom = Math.max(this.state.zoom - 0.5, 0.5);
+                        this.updateLayout(); // 重新计算布局并渲染
+                    }
+
+                    // 4. 全景复位逻辑
+                    if (type === 'CMD_RESET' || type === 'CMD_ZOOM_RESET') {
+                        // 确保 Core 已加载
+                        if (this.resetView) {
+                            this.resetView();
+                        }
+                    }
+
+                    // 5. [功能] 切换特性 (如：显示/隐藏纽带连接)
+                    if (type === 'CMD_TOGGLE_FEATURE') {
+                        // payload 也是字符串，例如 'connections'
+                        this.toggleFeature(payload);
+                    }
+
+                    // 6. 搜索结果跳转
+                    if (type === 'CMD_SEARCH_RESULT') {
+                        if (payload.target === 'panorama') {
+                            this.handleJump(payload.params);
+                        }
+                    }
+
+                    // 7. 直接跳转指令
+                    if (type === 'CMD_JUMP') {
+                        this.handleJump(payload);
+                    }
+                });
+
+                // Notify parent
+                if (window.parent !== window) {
+                    window.parent.postMessage({ type: 'CHILD_READY', payload: { source: 'panorama' } }, '*');
+                }
+
+                // Bind UI Events
+                this.bindEvents();
+            },
+
+            // --- [修复] 全景页专用复位函数 (安全版) ---
+            resetView: function () {
+                console.log("🔄 [Panorama] 执行全景复位...");
+
+                // 1. 重置核心数据
+                this.state.zoom = 1.5;
+                this.state.lastClickedGeoCode = null;
+
+                // 2. [安全修复] 更新滑块 (先检查元素是否存在)
+                // 你的代码里其实没有 id="zoom-slider"，这之前导致了报错
+                const zSlider = document.getElementById('zoom-slider');
+                if (zSlider) {
+                    zSlider.value = 1.5;
+                }
+
+                // 3. 清理聚焦状态
+                this.ui.clearFocus();
+                this.ui.closePanel();
+
+                // 4. [安全修复] 隐藏弹窗 (先检查元素是否存在)
+                const selModal = document.getElementById('selection-modal');
+                if (selModal) selModal.classList.add('hidden');
+
+                const searchRes = document.getElementById('search-results');
+                if (searchRes) searchRes.style.display = 'none';
+
+                const searchInp = document.getElementById('search-input');
+                if (searchInp) searchInp.value = '';
+
+                // 移除高亮类
+                document.querySelectorAll('.era-dimmed').forEach(el => el.classList.remove('era-dimmed'));
+
+                // 5. 立即重绘
+                this.updateLayout();
+
+                // 6. [安全修复] 滚动归零
+                const main = document.getElementById('main-content');
+                if (main) {
+                    main.style.scrollBehavior = 'auto'; // 禁用平滑滚动防止冲突
+                    main.scrollTop = 0;
+                    main.scrollLeft = 0;
+
+                    // 延时恢复平滑滚动，并再次确保 main 存在
+                    setTimeout(() => {
+                        const m = document.getElementById('main-content');
+                        if (m) m.style.scrollBehavior = 'smooth';
+                    }, 500);
+                }
+
+                console.log("✅ 全景视图已恢复 (Zoom: 1.5)");
+            },
+
+            bindEvents: function () {
+                const safeBind = (id, event, handler) => { const el = document.getElementById(id); if (el) el.addEventListener(event, handler); };
+                safeBind('btn-connections', 'click', () => this.toggleFeature('connections'));
+                safeBind('btn-close-panel', 'click', () => this.ui.closePanel());
+                safeBind('btn-close-modal', 'click', () => document.getElementById('selection-modal').classList.add('hidden'));
+                safeBind('quick-nav', 'change', (e) => {
+                    const y = parseInt(e.target.value);
+                    if (!isNaN(y)) {
+                        const targetY = (y - APP_CONFIG.minYear) * this.state.zoom;
+                        document.getElementById('main-content').scrollTo({ top: targetY, behavior: 'smooth' });
+                    }
+                });
+
+                const searchInput = document.getElementById('search-input');
+                const handleSearch = (val) => {
+                    const term = val.trim().toLowerCase();
+                    document.querySelectorAll('.era-block-fragment').forEach(b => {
+                        if (b.dataset.name) b.classList.toggle('era-dimmed', term !== "" && !b.dataset.name.toLowerCase().includes(term));
+                    });
+                    this.ui.populateSearchResults(term);
+                };
+                if (searchInput) {
+                    searchInput.addEventListener('input', (e) => handleSearch(e.target.value));
+                    searchInput.addEventListener('focus', (e) => { if (e.target.value.trim().length > 0) handleSearch(e.target.value); });
+                }
+
+                const zSlide = document.getElementById('zoom-slider');
+                if (zSlide) zSlide.addEventListener('input', (e) => {
+                    this.state.zoom = parseFloat(e.target.value);
+                    requestAnimationFrame(() => this.render.drawAll());
+                });
+
+                // Add Interaction for render area
+                const renderArea = document.getElementById('render-area');
+                if (renderArea) {
+                    const crosshairLine = document.getElementById('crosshair-line');
+                    // [修改] 移除外部的 const crosshairLabel = ...
+
+                    renderArea.addEventListener('mousemove', function (e) {
+                        // [修改] 在事件触发时动态获取最新的 label 元素
+                        const crosshairLabel = document.getElementById('crosshair-label');
+
+                        const rect = renderArea.getBoundingClientRect();
+                        const y = e.clientY - rect.top;
+                        if (crosshairLine) { crosshairLine.style.display = 'block'; crosshairLine.style.top = y + 'px'; }
+                        const year = Math.floor((y / Core.state.zoom) + APP_CONFIG.minYear);
+                        if (crosshairLabel) { crosshairLabel.style.display = 'block'; crosshairLabel.style.top = y + 'px'; crosshairLabel.innerText = year; }
+                    });
+                }
+            },
+
+            processData: function (rows) {
+                if (!rows || rows.length === 0) {
+                    console.error("Panorama received empty data");
+                    return;
+                }
+
+                // 1. 建立 Code -> Name 全局查找表 (用于解析宗主国代码)
+                const codeToNameMap = {};
+                rows.forEach(r => {
+                    const code = r.regime_code;
+                    const name = r.regime_name || r.name;
+                    if (code && name) codeToNameMap[code] = name;
+                });
+
+                const uniqueRegs = {};
+                const groups = {};
+                const rawList = [];
+
+                rows.forEach((r, i) => {
+                    const geoCode = r.geo_code || r.geo;
+                    const geoName = r.geo_name || r.region || "未知";
+
+                    if (!geoCode) return;
+                    if (!uniqueRegs[geoCode]) uniqueRegs[geoCode] = geoName;
+
+                    const key = r.regime_name || r.name || "未知政权";
+
+                    // 初始化 Group
+                    if (!groups[key]) {
+                        groups[key] = {
+                            id: key,
+                            groupId: 'g-' + this.logic.simpleHash(key),
+                            name: key,
+                            regimeCode: r.regime_code || "C11",
+                            minStart: 9999, maxEnd: -9999,
+                            explicitTier: parseInt(r.regime_tier || r.level || 3),
+                            fragments: [],
+                            visualSlices: [],
+                            globalMinCol: 9999, globalMaxCol: -9999,
+                            // Group 级别的宗主信息仅作参考（取出现过的任何一个）
+                            suzerain: null
+                        };
+                    }
+
+                    let start = parseInt(r.start_year || r.year_start);
+                    let end = (r.end_year === 'present' || r.year_end === 'present') ? TIME_CONFIG.MAX_YEAR : parseInt(r.end_year || r.year_end);
+                    if (isNaN(start)) start = TIME_CONFIG.DEFAULT_START || -200;
+                    if (isNaN(end)) end = TIME_CONFIG.MAX_YEAR;
+
+                    // 【关键修复】为当前这一行（Fragment）解析宗主国名称
+                    let rawSuzCode = r.suzerain_code || r.suzerain;
+                    let resolvedSuzName = null;
+
+                    if (rawSuzCode && rawSuzCode !== 'null') {
+                        if (r.suzerain_type === 'V|J' && rawSuzCode.includes('|')) {
+                            // 双重关系：分别翻译
+                            const parts = rawSuzCode.split('|');
+                            const name1 = codeToNameMap[parts[0]] || parts[0];
+                            const name2 = codeToNameMap[parts[1]] || parts[1];
+                            resolvedSuzName = `${name1}|${name2}`;
+                        } else {
+                            // 单重关系
+                            resolvedSuzName = codeToNameMap[rawSuzCode] || rawSuzCode;
+                        }
+                    } else {
+                        // 显式标记为空，确保详情页能识别出"无"
+                        rawSuzCode = null;
+                    }
+
+                    // 构建 Fragment
+                    const frag = {
+                        id: i, name: key, start: start, end: end,
+                        regimeCode: r.regime_code, geoCode: geoCode,
+                        explicitTier: groups[key].explicitTier,
+
+                        // 确保存入解析后的数据
+                        suzerain: rawSuzCode,
+                        suzerainName: resolvedSuzName,
+                        suzerainType: r.suzerain_type,
+                        desc: r.desc
+                    };
+
+                    groups[key].fragments.push(frag);
+                    groups[key].minStart = Math.min(groups[key].minStart, start);
+                    groups[key].maxEnd = Math.max(groups[key].maxEnd, end);
+                    groups[key].globalMinYear = Math.min(groups[key].globalMinYear, start);
+                    groups[key].globalMaxYear = Math.max(groups[key].globalMaxYear, end);
+
+                    rawList.push(frag);
+                });
+
+                this.state.rawRegions = Object.entries(uniqueRegs).map(([k, v]) => ({ id: k, label: v }));
+                this.state.regimeGroups = Object.values(groups);
+                this.state.rawData = rawList;
+
+                this.updateLayout();
+            },
+
+            updateLayout: function () {
+                this.state.regions = this.logic.applyFixedLayout(this.state.rawRegions);
+                this.state.regionIndexMap = this.state.regions.reduce((acc, r, i) => { acc[r.id] = i; return acc; }, {});
+
+                this.logic.calculateGroupCenters(this.state.regimeGroups, this.state.regionIndexMap);
+                this.render.drawAll();
+            },
+
+            getStyle: function (group, frag) {
+                const regimeCode = group.regimeCode;
+                const name = group.name;
+                const suzerainCode = (frag && frag.suzerain) ? frag.suzerain : group.suzerain;
+                const suzerainType = (frag && frag.suzerainType) ? frag.suzerainType : group.suzerainType;
+
+                if (window.parent && window.parent.GlobalUtils) {
+                    try {
+                        return window.parent.GlobalUtils.getStyle(regimeCode, name, suzerainCode, suzerainType);
+                    } catch (e) {
+                        console.warn("Call parent GlobalUtils.getStyle failed", e);
+                    }
+                }
+                return { bg: '#666', border: '#444', className: 'texture-N', isDashed: false };
+            },
+
+            handleJump: function (payload) {
+                if (payload.year) {
+                    const targetY = (parseInt(payload.year) - APP_CONFIG.minYear) * this.state.zoom;
+                    document.getElementById('main-content').scrollTo({ top: targetY, behavior: 'smooth' });
+                }
+                if (payload.regime) {
+                    const target = this.state.regimeGroups.find(g => g.name.includes(payload.regime));
+                    if (target) setTimeout(() => this.ui.jumpToRegime(target), 300);
+                }
+            },
+
+            logic: {
+                getRegimeTier: function (t) { return parseInt(t) || 3; },
+                simpleHash: function (str) { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h) + str.charCodeAt(i); return (h >>> 0).toString(36); },
+
+                calculateGroupCenters: function (groups, regionIndexMap) {
+                    groups.forEach(g => {
+                        let totalCol = 0, count = 0;
+                        g.fragments.forEach(f => {
+                            const idx = regionIndexMap[f.geoCode];
+                            if (idx !== undefined) {
+                                totalCol += idx; count++;
+                                g.globalMinCol = Math.min(g.globalMinCol, idx);
+                                g.globalMaxCol = Math.max(g.globalMaxCol, idx);
+                            }
+                        });
+                        g.centerCol = count > 0 ? (totalCol / count) : 0;
+                        g.globalDuration = g.globalMaxYear - g.globalMinYear;
+                    });
+                },
+
+                applyFixedLayout: function (rawRegions) {
+                    const FIXED_ORDER = ['550', '530', '520', '510', '540', '440', '410', '420', '430', '330', '350', '340', '260', '270', '310', '250', '240', '320', '220', '210', '230', '190', '150', '130', '140', '160', '120', '110', '180', '170', '610', '620', '740', '730', '720', '710', '820', '810', '840', '830', '850', '910', '920', '930', '940', '950', '960'];
+                    const rankMap = {}; FIXED_ORDER.forEach((c, i) => rankMap[c] = i);
+                    return rawRegions.slice().sort((a, b) => {
+                        const rA = rankMap[a.id] !== undefined ? rankMap[a.id] : 9999;
+                        const rB = rankMap[b.id] !== undefined ? rankMap[b.id] : 9999;
+                        return rA - rB;
+                    });
+                },
+
+                sliceFragmentsByRegion: function (fragments, colIdx, allGroups, regionIndexMap, layoutCache) {
+                    if (!fragments || fragments.length === 0) return [];
+
+                    const columnGroups = {};
+                    fragments.forEach(f => {
+                        if (!columnGroups[f.groupId]) columnGroups[f.groupId] = { groupId: f.groupId, group: f.group, maxDuration: 0, hasLeft: false, hasRight: false, checked: false };
+                        columnGroups[f.groupId].maxDuration = Math.max(columnGroups[f.groupId].maxDuration, f.end - f.start);
+                        if (!columnGroups[f.groupId].checked) {
+                            const gFrags = f.group.fragments;
+                            columnGroups[f.groupId].hasLeft = gFrags.some(gf => regionIndexMap[gf.geoCode] === colIdx - 1);
+                            columnGroups[f.groupId].hasRight = gFrags.some(gf => regionIndexMap[gf.geoCode] === colIdx + 1);
+                            columnGroups[f.groupId].checked = true;
+                        }
+                    });
+
+                    const groupScores = {};
+                    Object.keys(columnGroups).forEach(gId => {
+                        const data = columnGroups[gId];
+                        let score = 0;
+                        if (data.hasLeft && !data.hasRight) score = -10000;
+                        else if (!data.hasLeft && data.hasRight) score = 10000;
+                        score -= data.maxDuration;
+                        groupScores[gId] = score;
+                    });
+
+                    const points = new Set();
+                    fragments.forEach(f => { if (!isNaN(f.start)) points.add(f.start); if (!isNaN(f.end)) points.add(f.end); });
+                    const sortedPoints = Array.from(points).sort((a, b) => a - b);
+                    const slices = [];
+
+                    if (!layoutCache[colIdx]) layoutCache[colIdx] = {};
+
+                    for (let i = 0; i < sortedPoints.length - 1; i++) {
+                        const pStart = sortedPoints[i];
+                        const pEnd = sortedPoints[i + 1];
+                        const activeFrags = fragments.filter(f => f.start <= pStart && f.end >= pEnd);
+
+                        if (activeFrags.length > 0) {
+                            const width = 100 / activeFrags.length;
+                            activeFrags.sort((a, b) => groupScores[a.groupId] - groupScores[b.groupId]);
+
+                            activeFrags.forEach((frag, idx) => {
+                                const newFrag = Object.assign({}, frag);
+                                newFrag.displayStart = pStart; newFrag.displayEnd = pEnd;
+                                newFrag.leftPct = idx * width; newFrag.widthPct = width;
+                                newFrag.group.visualSlices.push({ cIdx: colIdx, start: pStart, end: pEnd, left: newFrag.leftPct / 100, w: newFrag.widthPct / 100, dur: pEnd - pStart });
+                                slices.push(newFrag);
+                            });
+                        }
+                    }
+                    return slices;
+                },
+
+                calculateLabelPositions: function (group, regionIndexMap, colWidth) {
+                    const frags = group.visualSlices;
+                    if (!frags || frags.length === 0) return [];
+
+                    frags.sort((a, b) => a.cIdx - b.cIdx || a.start - b.start);
+
+                    const clusters = [];
+                    const processed = new Set();
+
+                    frags.forEach((f, i) => {
+                        if (processed.has(i)) return;
+                        const currentCluster = [f];
+                        processed.add(i);
+
+                        let queue = [f];
+                        while (queue.length > 0) {
+                            let curr = queue.shift();
+                            for (let j = 0; j < frags.length; j++) {
+                                if (processed.has(j)) continue;
+                                const cand = frags[j];
+                                const sameCol = (cand.cIdx === curr.cIdx);
+                                const timeTouch = (cand.start <= curr.end + 5) && (cand.end >= curr.start - 5);
+                                const neighborCol = Math.abs(cand.cIdx - curr.cIdx) === 1;
+                                const timeOverlap = (cand.start < curr.end) && (cand.end > curr.start);
+
+                                if ((sameCol && timeTouch) || (neighborCol && timeOverlap)) {
+                                    currentCluster.push(cand);
+                                    processed.add(j);
+                                    queue.push(cand);
+                                }
+                            }
+                        }
+                        clusters.push(currentCluster);
+                    });
+
+                    const results = clusters.map(cluster => {
+                        let totalArea = 0;
+                        let weightedX = 0;
+                        let weightedY = 0;
+                        let minTime = 9999, maxTime = -9999;
+                        let minC = 9999, maxC = -9999;
+
+                        let maxSliceArea = -1;
+                        let bestSlice = null;
+
+                        cluster.forEach(f => {
+                            const h = f.dur;
+                            const wPct = f.w;
+                            const area = h * wPct;
+
+                            const physCenterX = (f.cIdx + f.left + (f.w / 2)) * colWidth;
+                            const physCenterY = (f.start + f.end) / 2;
+
+                            weightedX += physCenterX * area;
+                            weightedY += physCenterY * area;
+                            totalArea += area;
+
+                            minTime = Math.min(minTime, f.start);
+                            maxTime = Math.max(maxTime, f.end);
+                            minC = Math.min(minC, f.cIdx);
+                            maxC = Math.max(maxC, f.cIdx);
+
+                            if (area > maxSliceArea) {
+                                maxSliceArea = area;
+                                bestSlice = { x: physCenterX, y: physCenterY, w: f.w * colWidth, h: h };
+                            }
+                        });
+
+                        if (totalArea === 0) return null;
+
+                        const finalX = weightedX / totalArea;
+                        const finalY = weightedY / totalArea;
+                        const fullHeight = maxTime - minTime;
+                        const effectiveWidthPx = (totalArea / Math.max(fullHeight, 1)) * colWidth;
+                        const boundingWidthPx = (maxC - minC + 1) * colWidth;
+                        const colSpan = maxC - minC + 1;
+
+                        return {
+                            x: finalX,
+                            y: finalY,
+                            bestSlice: bestSlice,
+                            w: effectiveWidthPx,
+                            fullW: boundingWidthPx,
+                            colSpan: colSpan,
+                            h: fullHeight,
+                            area: totalArea
+                        };
+                    }).filter(r => r !== null);
+
+                    if (group.explicitTier == 1) {
+                        results.sort((a, b) => b.area - a.area);
+                        return [results[0]];
+                    }
+
+                    return results.filter(r => r.area > 5);
+                }
+            },
+
+            render: {
+                drawAll: function () {
+                    // 恢复严格碰撞检测，不使用 Monkey Patch
+                    collisionMgr.reset();
+
+                    Core.state.regimeGroups.forEach(g => g.visualSlices = []);
+
+                    let container = document.getElementById('chart-container');
+                    if (!container) return;
+
+                    let headerBody = document.getElementById('header-body');
+                    let ticksLayer = document.getElementById('ticks-layer');
+                    let renderArea = document.getElementById('render-area');
+
+                    headerBody.innerHTML = '';
+                    ticksLayer.innerHTML = '<div id="crosshair-label"></div>';
+                    document.getElementById('blocks-layer').innerHTML = '';
+                    document.getElementById('labels-layer').innerHTML = '';
+                    document.getElementById('connections-layer').innerHTML = '';
+
+                    if (!Core.state.regions || Core.state.regions.length === 0) return;
+
+                    let totalHeight = (APP_CONFIG.maxYear - APP_CONFIG.minYear) * Core.state.zoom + 100;
+                    let colCount = Core.state.regions.length;
+
+                    ticksLayer.style.height = totalHeight + 'px';
+                    renderArea.style.height = totalHeight + 'px';
+
+                    Core.state.regions.forEach((r, i) => {
+                        let el = document.createElement('div');
+                        el.className = 'header-col-label';
+                        el.style.left = (i / colCount) * 100 + '%'; el.style.width = (1 / colCount) * 100 + '%'; el.innerText = r.label;
+                        headerBody.appendChild(el);
+                    });
+
+                    let tickFrag = document.createDocumentFragment();
+                    for (let y = APP_CONFIG.minYear; y <= APP_CONFIG.maxYear; y += 100) {
+                        let top = (y - APP_CONFIG.minYear) * Core.state.zoom;
+                        if (top < 0) continue;
+                        let el = document.createElement('div'); el.className = 'timeline-tick-label';
+                        el.style.top = top + 'px'; el.innerText = y; tickFrag.appendChild(el);
+                    }
+                    ticksLayer.appendChild(tickFrag);
+
+                    Core.render.setupInteractions(renderArea, colCount);
+
+                    let fragsByRegion = {};
+                    Core.state.regimeGroups.forEach(group => {
+                        let style = Core.getStyle(group);
+                        let groupId = group.groupId;
+                        group.fragments.forEach(f => {
+                            if (!fragsByRegion[f.geoCode]) fragsByRegion[f.geoCode] = [];
+                            let fragStyle = style;
+                            if (f.suzerain) fragStyle = Core.getStyle(group, f);
+                            fragsByRegion[f.geoCode].push(Object.assign({}, f, { style: fragStyle, groupName: group.name, groupId: groupId, group: group }));
+                        });
+                    });
+
+                    let allRenderSlices = [];
+                    Core.state.regions.forEach((region, colIdx) => {
+                        let fragments = fragsByRegion[region.id];
+                        if (fragments) {
+                            let slices = Core.logic.sliceFragmentsByRegion(fragments, colIdx, Core.state.regimeGroups, Core.state.regionIndexMap, Core.state.layoutCache);
+                            slices.forEach(s => { s.colIdx = colIdx; allRenderSlices.push(s); });
+                        }
+                    });
+
+                    allRenderSlices.sort((a, b) => {
+                        if (a.groupId !== b.groupId) return a.groupId.localeCompare(b.groupId);
+                        if (Math.abs(a.displayStart - b.displayStart) > 0.1) return a.displayStart - b.displayStart;
+                        return a.colIdx - b.colIdx;
+                    });
+
+                    let mergedSlices = [];
+                    if (allRenderSlices.length > 0) {
+                        let currentMerge = allRenderSlices[0];
+                        currentMerge.colspan = 1; currentMerge.startCol = currentMerge.colIdx;
+                        for (let i = 1; i < allRenderSlices.length; i++) {
+                            let next = allRenderSlices[i];
+                            let prev = currentMerge;
+                            let isSame = next.groupId === prev.groupId &&
+                                next.colIdx === (prev.startCol + prev.colspan) &&
+                                Math.abs(next.displayStart - prev.displayStart) < 0.1 &&
+                                Math.abs(next.displayEnd - prev.displayEnd) < 0.1 &&
+                                prev.widthPct >= 95;
+                            if (isSame) currentMerge.colspan++;
+                            else { mergedSlices.push(currentMerge); currentMerge = next; currentMerge.colspan = 1; currentMerge.startCol = currentMerge.colIdx; }
+                        }
+                        mergedSlices.push(currentMerge);
+                    }
+
+                    let blocksFrag = document.createDocumentFragment();
+                    mergedSlices.forEach(slice => {
+                        let top = (slice.displayStart - APP_CONFIG.minYear) * Core.state.zoom;
+                        let h = Math.max((slice.displayEnd - slice.displayStart) * Core.state.zoom, 1);
+                        let el = document.createElement('div');
+
+                        el.className = 'era-block-fragment ' + slice.style.className + ' ' + slice.groupId;
+                        el.style.backgroundColor = slice.style.bg;
+                        if (slice.style.pattern) el.style.setProperty('--pat-color', slice.style.pattern);
+
+                        if (slice.style.className.includes('texture-V') || slice.style.className.includes('texture-VJ')) {
+                            el.style.borderStyle = 'dashed'; el.style.borderColor = slice.style.border; el.style.borderWidth = '2px';
+                            el.style.zIndex = parseInt(el.style.zIndex || 10) + 1;
+                        } else {
+                            el.style.border = '1px solid rgba(0,0,0,0.1)';
+                        }
+
+                        let isLeft = slice.startCol === 0;
+                        let isRight = (slice.startCol + slice.colspan) === colCount;
+                        let checkNeighbor = (c) => allRenderSlices.some(o => o.colIdx === c && o.groupId === slice.groupId && Math.max(slice.displayStart, o.displayStart) < Math.min(slice.displayEnd, o.displayEnd));
+                        let hasL = checkNeighbor(slice.startCol - 1);
+                        let hasR = checkNeighbor(slice.startCol + slice.colspan);
+
+                        if (hasL || (slice.colspan > 1 && !isLeft)) el.classList.add('no-border-left');
+                        if (hasR || (slice.colspan > 1 && !isRight)) el.classList.add('no-border-right');
+
+                        let colWidthPct = 100 / colCount;
+                        let totalWidthPct = slice.colspan * (slice.widthPct / 100) * colWidthPct;
+                        let totalLeftPct = (slice.startCol * colWidthPct) + ((slice.leftPct / 100) * colWidthPct);
+
+                        el.style.left = totalLeftPct + '%';
+
+                        if ((hasL || hasR || slice.colspan > 1) && slice.widthPct >= 95) {
+                            el.style.width = `calc(${totalWidthPct}% + 1px)`;
+                            if (hasL || (!isLeft && slice.colspan > 1)) el.style.marginLeft = '-1px';
+                        } else {
+                            el.style.width = totalWidthPct + '%';
+                        }
+
+                        el.style.top = top + 'px'; el.style.height = h + 'px';
+                        el.__data__ = { group: slice.group, style: slice.style, fragment: slice };
+                        el.onmouseenter = () => { if (!Core.state.focusedGroupId) { document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.add('group-hovered')); if (Core.state.features.connections) Core.render.drawConnections(slice.group, '#fff'); } };
+                        el.onmouseleave = () => { if (!Core.state.focusedGroupId) { document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.remove('group-hovered')); document.getElementById('connections-layer').innerHTML = ''; } };
+
+                        blocksFrag.appendChild(el);
+                    });
+                    document.getElementById('blocks-layer').appendChild(blocksFrag);
+
+                    Core.render.drawLabels(colCount);
+                },
+
+                setupInteractions: function (renderArea, colCount) {
+                    renderArea.onclick = (e) => {
+                        if (e.target.closest('#selection-modal')) return;
+                        let clickedBlock = e.target.closest('.era-block-fragment');
+                        if (clickedBlock && clickedBlock.__data__) {
+                            e.stopPropagation();
+                            let d = clickedBlock.__data__;
+                            Core.state.lastClickedGeoCode = d.fragment.geoCode;
+                            Core.ui.setFocus(d.group.groupId);
+                            Core.ui.showDetails(d.group, d.style);
+                            return;
+                        }
+                        if (!e.target.closest('.era-label')) Core.ui.clearFocus();
+                    };
+                },
+
+                // --- 最终修正版 v7：视觉/物理分离 + 微量横向抖动 ---
+                drawLabels: function (colCount) {
+                    let labelsFrag = document.createDocumentFragment();
+                    let renderArea = document.getElementById('render-area');
+                    // 每次重绘前，强制删除旧的文字标签和圆点
+                    if (renderArea) {
+                        const oldItems = renderArea.querySelectorAll('.era-label, .era-dot');
+                        oldItems.forEach(el => el.remove());
+                    }
+                    let colWidthPx = renderArea.scrollWidth / colCount;
+
+                    let allLabels = [];
+                    Core.state.regimeGroups.forEach(group => {
+                        let positions = Core.logic.calculateLabelPositions(group, Core.state.regionIndexMap, colWidthPx);
+                        positions.forEach(pos => { allLabels.push({ group: group, pos: pos }); });
+                    });
+
+                    allLabels.sort((a, b) => {
+                        let tA = parseInt(a.group.explicitTier) || 3;
+                        let tB = parseInt(b.group.explicitTier) || 3;
+
+                        if (tA !== tB) return tA - tB;
+
+                        if (Math.abs(b.pos.fullW - a.pos.fullW) > 10) {
+                            return b.pos.fullW - a.pos.fullW;
+                        }
+
+                        return b.pos.area - a.pos.area;
+                    });
+
+                    allLabels.forEach(function (item) {
+                        let group = item.group;
+                        let pos = item.pos;
+                        let tier = parseInt(group.explicitTier) || 3;
+                        let txt = group.name;
+                        let len = txt.length;
+
+                        let boxH = pos.h * Core.state.zoom;
+
+                        let useFullW = (pos.colSpan >= 2) || (tier === 1);
+                        let boxW = pos.w;
+                        if (useFullW) {
+                            boxW = (tier === 1) ? pos.fullW : Math.min(pos.fullW, pos.w * 1.8);
+                        }
+
+                        let boxY = (pos.y - APP_CONFIG.minYear) * Core.state.zoom;
+
+                        let ratio = boxH / boxW;
+
+                        let preferVertical = (boxW < colWidthPx * 1.2) || (pos.colSpan === 1 && boxH > 40) || (ratio > 2.5);
+
+                        let bestLayout = null;
+
+                        let minFS, maxFS;
+                        if (tier === 1) {
+                            minFS = 20; maxFS = 70;
+                        } else if (tier === 2) {
+                            minFS = 10; maxFS = 25;
+                        } else {
+                            minFS = 9; maxFS = 16;
+                        }
+
+                        const paddingFactor = 0.9;
+
+                        const tryLayout = (type) => {
+                            let fs = 0;
+                            let w = 0, h = 0;
+                            let scorePenalty = 1.0;
+
+                            if (type === 'H') {
+                                let maxW = (boxW * paddingFactor) / len;
+                                let maxH = Math.max(boxH * paddingFactor, minFS);
+                                fs = Math.min(maxW, maxH);
+                                w = fs * len; h = fs;
+                                scorePenalty = 1.2;
+                            }
+                            else if (type === 'V') {
+                                let maxW = boxW * paddingFactor;
+                                let maxH = (boxH * paddingFactor) / len;
+                                fs = Math.min(maxW, maxH);
+                                w = fs; h = fs * len;
+                                if (preferVertical) scorePenalty = 1.3;
+                            }
+                            else if (type === 'Wrap') {
+                                let charsPerLine = Math.ceil(Math.sqrt(len));
+                                if (len >= 6) charsPerLine = Math.ceil(len / 2);
+                                let lines = Math.ceil(len / charsPerLine);
+                                let maxW = (boxW * paddingFactor) / charsPerLine;
+                                let maxH = (boxH * paddingFactor) / (lines * 1.05);
+                                fs = Math.min(maxW, maxH);
+                                w = fs * charsPerLine;
+                                h = fs * lines * 1.05;
+                                scorePenalty = 0.6;
+                            }
+
+                            if (fs < minFS) return null;
+                            if (fs > maxFS) fs = maxFS;
+
+                            return { type, fs, w, h, score: fs * scorePenalty };
+                        };
+
+                        let candidates = [];
+                        if (preferVertical) {
+                            candidates.push(tryLayout('V'));
+                            if (!candidates[0]) candidates.push(tryLayout('H'));
+                        } else {
+                            candidates.push(tryLayout('H'));
+                            candidates.push(tryLayout('Wrap'));
+                            candidates.push(tryLayout('V'));
+                        }
+
+                        candidates = candidates.filter(c => c !== null);
+                        if (candidates.length > 0) {
+                            candidates.sort((a, b) => b.score - a.score);
+                            bestLayout = candidates[0];
+                        }
+
+                        if (!bestLayout && tier === 1) {
+                            bestLayout = { type: preferVertical ? 'V' : 'H', fs: minFS, w: boxW, h: boxH };
+                        }
+
+                        if (bestLayout) {
+                            let finalFS = bestLayout.fs;
+                            let placed = false;
+                            let testW, testH;
+                            let canShrink = (finalFS > 10);
+
+                            // 尝试放置函数
+                            let tryPlace = (cX, cY, shrinkExtra = false) => {
+                                let iterFS = finalFS;
+                                if (Math.abs(cY - boxY) > 5) iterFS = bestLayout.fs;
+
+                                while (iterFS >= minFS) {
+                                    if (bestLayout.type === 'H') {
+                                        testW = iterFS * len; testH = iterFS;
+                                    } else if (bestLayout.type === 'Wrap') {
+                                        let ratio = iterFS / bestLayout.fs;
+                                        testW = bestLayout.w * ratio; testH = bestLayout.h * ratio;
+                                    } else {
+                                        testW = bestLayout.w; testH = bestLayout.h;
+                                    }
+
+                                    let lX = cX - testW / 2;
+                                    let lY = cY - testH / 2;
+
+                                    // 【核心修改】物理层与视觉层分离
+                                    // 无论 Tier 几，防撞箱一律设为视觉大小的 85%
+                                    // 这产生了“隐形边距”，允许标签紧挨着但不被判定为重叠
+                                    let colW = testW * 0.85;
+                                    let colH = testH * 0.85;
+
+                                    // 如果是绝境重试，再缩一点
+                                    if (shrinkExtra) {
+                                        colW *= 0.9;
+                                        colH *= 0.9;
+                                    }
+
+                                    // 碰撞箱居中
+                                    let colX = cX - colW / 2;
+                                    let colY = cY - colH / 2;
+
+                                    if (collisionMgr.add(colX, colY, colW, colH, tier)) {
+                                        finalFS = iterFS;
+                                        return { placed: true, x: cX, y: cY };
+                                    }
+                                    if (!canShrink) break;
+                                    iterFS *= 0.9;
+                                }
+                                return { placed: false };
+                            };
+
+                            // === 全方位扫描策略 ===
+
+                            // 1. 垂直扫描点 (中 -> 上 -> 下)
+                            let vOffsets = [0];
+                            if (tier > 1 && boxH > 20) {
+                                vOffsets.push(-boxH * 0.25);
+                                vOffsets.push(boxH * 0.25);
+                                vOffsets.push(-boxH * 0.40);
+                                vOffsets.push(boxH * 0.40);
+                            }
+
+                            // 2. 【新增】微量横向抖动 (专治单列被卡死)
+                            // 尝试 -2px, +2px 的偏移，看看能不能避开邻居的边界像素
+                            let hOffsets = [0, -2, 2];
+
+                            let result = { placed: false };
+
+                            // 扫描重心
+                            outerLoop:
+                            for (let vo of vOffsets) {
+                                for (let ho of hOffsets) {
+                                    result = tryPlace(pos.x + ho, boxY + vo, false);
+                                    if (result.placed) break outerLoop;
+                                }
+                            }
+
+                            // 扫描最大切片
+                            if (!result.placed && pos.bestSlice && tier > 1) {
+                                let sliceCenterY = (pos.bestSlice.y - APP_CONFIG.minYear) * Core.state.zoom;
+                                let sliceX = pos.bestSlice.x;
+                                outerLoopSlice:
+                                for (let vo of vOffsets) {
+                                    for (let ho of hOffsets) {
+                                        result = tryPlace(sliceX + ho, sliceCenterY + vo, false);
+                                        if (result.placed) break outerLoopSlice;
+                                    }
+                                }
+                            }
+
+                            // 绝境求生
+                            if (!result.placed && tier === 3) {
+                                result = tryPlace(pos.x, boxY, true);
+                            }
+
+                            if (result.placed) {
+                                let label = document.createElement('div');
+                                let layoutClass = '';
+                                if (bestLayout.type === 'V') layoutClass = 'vertical-text';
+                                if (bestLayout.type === 'Wrap') layoutClass = 'label-wrap';
+
+                                label.className = `era-label label-tier-${tier} ${group.groupId} ${layoutClass}`;
+                                label.innerText = txt;
+
+                                // 居中定位 (注意：result.x/y 是中心点)
+                                // 因为 CSS .era-label 有 transform: translate(-50%, -50%)
+                                // 所以这里直接赋值 result.x/y 即可完美居中
+                                label.style.left = result.x + 'px';
+                                label.style.top = result.y + 'px';
+
+                                label.style.width = (bestLayout.type === 'Wrap' ? testW : 'auto') + 'px';
+                                label.style.fontSize = finalFS + 'px';
+                                label.style.lineHeight = '1';
+
+                                if (bestLayout.type === 'H') label.style.whiteSpace = 'nowrap';
+                                if (Core.state.focusedGroupId === group.groupId) label.classList.add('is-focused');
+                                labelsFrag.appendChild(label);
+                            } else if (tier > 1) {
+                                // 小圆点
+                                if (boxW > 5 && boxH > 5) {
+                                    let dotSize = Math.min(6, Math.min(boxW, boxH));
+                                    // 圆点碰撞箱也缩小
+                                    let hitSize = dotSize * 0.8;
+                                    let tryDot = (dX, dY) => collisionMgr.add(dX - hitSize / 2, dY - hitSize / 2, hitSize, hitSize, 99);
+
+                                    let dotPlaced = false;
+                                    let dotX, dotY;
+
+                                    // 简单扫描
+                                    for (let vo of [0, -boxH * 0.25, boxH * 0.25]) {
+                                        if (tryDot(pos.x, boxY + vo)) { dotPlaced = true; dotX = pos.x; dotY = boxY + vo; break; }
+                                    }
+
+                                    if (!dotPlaced && pos.bestSlice) {
+                                        let sy = (pos.bestSlice.y - APP_CONFIG.minYear) * Core.state.zoom;
+                                        if (tryDot(pos.bestSlice.x, sy)) { dotPlaced = true; dotX = pos.bestSlice.x; dotY = sy; }
+                                    }
+
+                                    if (dotPlaced) {
+                                        let dot = document.createElement('div');
+                                        dot.className = `era-dot absolute rounded-full bg-white/40 cursor-help hover:bg-white hover:scale-150 hover:shadow-[0_0_5px_rgba(255,255,255,0.8)] transition-all duration-200 z-[60]`;
+                                        // 圆点无 translate，需算回左上角
+                                        dot.style.left = (dotX - dotSize / 2) + 'px';
+                                        dot.style.top = (dotY - dotSize / 2) + 'px';
+                                        dot.style.width = dotSize + 'px';
+                                        dot.style.height = dotSize + 'px';
+                                        dot.title = txt;
+                                        dot.onclick = (e) => {
+                                            e.stopPropagation();
+                                            Core.ui.setFocus(group.groupId);
+                                            Core.ui.showDetails(group, Core.getStyle(group));
+                                        };
+                                        labelsFrag.appendChild(dot);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    renderArea.appendChild(labelsFrag);
+                },
+
+                drawConnections: function (group, color) {
+                    let svg = document.getElementById('connections-layer');
+                    svg.innerHTML = '';
+                    let rect = document.getElementById('render-area').getBoundingClientRect();
+                    let colW = rect.width / Core.state.regions.length;
+                    let points = [];
+                    group.fragments.forEach(f => {
+                        let idx = Core.state.regionIndexMap[f.geoCode]; if (idx === undefined) return;
+                        let top = (f.start - APP_CONFIG.minYear) * Core.state.zoom;
+                        let xOffset = f.left + (f.w / 2);
+                        if (isNaN(xOffset)) xOffset = 0.5;
+                        points.push({ x: (idx + xOffset) * colW, y: top + (f.end - f.start) * Core.state.zoom / 2 });
+                    });
+                    if (points.length < 2) return;
+                    points.sort((a, b) => a.x - b.x);
+                    let d = "M " + points[0].x + " " + points[0].y;
+                    for (let i = 1; i < points.length; i++) { let p1 = points[i - 1], p2 = points[i]; let mx = (p1.x + p2.x) / 2; d += " C " + mx + " " + p1.y + ", " + mx + " " + p2.y + ", " + p2.x + " " + p2.y; }
+                    let path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                    path.setAttribute("d", d); path.setAttribute("class", "connection-path"); path.setAttribute("stroke", color);
+                    svg.appendChild(path);
+                }
+            },
+
+            ui: {
+                closePanel: function () {
+                    document.getElementById('editor-panel').classList.remove('panel-open');
+                    Core.ui.clearFocus();
+                },
+                setFocus: function (groupId) {
+                    if (Core.state.focusedGroupId === groupId) { Core.ui.clearFocus(); return; }
+                    Core.state.focusedGroupId = groupId;
+                    document.body.classList.add('mode-focus');
+                    document.querySelectorAll('.group-hovered').forEach(el => el.classList.remove('group-hovered'));
+                    document.querySelectorAll('.is-focused').forEach(el => el.classList.remove('is-focused'));
+                    document.querySelectorAll('.' + groupId).forEach(el => el.classList.add('is-focused'));
+
+                    const group = Core.state.regimeGroups.find(g => g.groupId === groupId);
+                    if (group) Core.render.drawConnections(group, '#fff');
+                },
+                clearFocus: function () {
+                    Core.state.focusedGroupId = null;
+                    document.body.classList.remove('mode-focus');
+                    document.querySelectorAll('.is-focused').forEach(el => el.classList.remove('is-focused'));
+                    document.getElementById('connections-layer').innerHTML = '';
+                },
+                showDetails: function (group, style) {
+                    const panel = document.getElementById('editor-panel');
+                    if (!panel) return;
+
+                    panel.classList.remove('panel-right', 'panel-left');
+                    const totalCols = Core.state.regions.length;
+                    const centerRatio = (group.centerCol || 0) / totalCols;
+                    panel.classList.add(centerRatio > 0.5 ? 'panel-left' : 'panel-right');
+                    requestAnimationFrame(() => panel.classList.add('panel-open'));
+
+                    // 1. 遍历所有片段，收集该政权历史上所有的宗主关系 (保持原逻辑不变)
+                    const uniqueSuzerains = new Set();
+
+                    group.fragments.forEach(f => {
+                        if (!f.suzerain) {
+                            uniqueSuzerains.add("无");
+                        }
+                        else if (f.suzerainName) {
+                            let txt = f.suzerainName;
+
+                            // 情况 A: V|J 双重关系
+                            if (f.suzerainType === 'V|J' && txt.includes('|')) {
+                                const parts = txt.split('|');
+                                const nameV = parts[0];
+                                const nameJ = parts[1] || parts[0];
+                                txt = `${nameJ} (羁縻) & ${nameV} (藩属)`;
+                            }
+                            // 情况 B: 单一关系
+                            else if (f.suzerainType) {
+                                const typeMap = { 'V': '藩属', 'J': '羁縻' };
+                                const typeName = typeMap[f.suzerainType] || f.suzerainType;
+                                txt = `${txt} (${typeName})`;
+                            }
+
+                            uniqueSuzerains.add(txt);
+                        }
+                    });
+
+                    // 2. 生成 HTML (保持原逻辑不变)
+                    let suzerainHtml = '';
+                    const hasOverlay = Array.from(uniqueSuzerains).some(s => s !== "无");
+
+                    if (hasOverlay) {
+                        const list = Array.from(uniqueSuzerains).join(' <span style="color:var(--slate-500)">/</span> ');
+                        suzerainHtml = `<div class="suzerain-tag">宗主: ${list}</div>`;
+                    }
+                    const f0 = group.fragments[0];
+                    const typeMap = { 'C': '中原', 'Q': '征服', 'R': '割据', 'N': '部族', 'F': '边疆', 'T': '过渡', 'V': '藩属' };
+                    const typeLabel = typeMap[group.regimeCode.charAt(0)] || '未知';
+
+                    let originLabel = f0.geoCode;
+                    const originRegion = Core.state.rawRegions.find(r => r.id == f0.geoCode);
+                    if (originRegion) originLabel = originRegion.label;
+
+                    let detailHtml = '';
+                    const fragsByGeo = {};
+                    group.fragments.forEach(f => {
+                        if (!fragsByGeo[f.geoCode]) fragsByGeo[f.geoCode] = [];
+                        fragsByGeo[f.geoCode].push(f);
+                    });
+
+                    const sortedGeoCodes = Object.keys(fragsByGeo).sort((a, b) =>
+                        (Core.state.regionIndexMap[a] || 0) - (Core.state.regionIndexMap[b] || 0)
+                    );
+
+                    const totalDur = Math.max(group.maxEnd - group.minStart, 1);
+
+                    sortedGeoCodes.forEach(geoCode => {
+                        const frags = fragsByGeo[geoCode];
+                        frags.sort((a, b) => a.start - b.start);
+
+                        let barsHtml = '';
+                        let timeTexts = [];
+
+                        frags.forEach(f => {
+                            const left = ((f.start - group.minStart) / totalDur) * 100;
+                            const width = ((f.end - f.start) / totalDur) * 100;
+                            barsHtml += `<div class="absolute h-full opacity-80" style="left:${left}%; width:${width}%; background:${style.bg}; border-radius:1px;"></div>`;
+                            timeTexts.push(`${f.start}~${f.end}`);
+                        });
+
+                        const regionName = Core.state.rawRegions.find(r => r.id == geoCode)?.label || geoCode;
+                        const isCurrent = Core.state.lastClickedGeoCode == geoCode;
+
+                        const rowClass = isCurrent ? 'active-row' : '';
+                        const nameClass = isCurrent ? 'active-name' : '';
+                        const icon = isCurrent ? '👉 ' : '';
+                        const timeStr = timeTexts.join(', ');
+
+                        detailHtml += `<div class="region-row ${rowClass}">
+                            <div class="region-name ${nameClass}" title="${regionName}">${icon}${regionName}</div>
+                            <div class="bar-container">${barsHtml}</div>
+                            <div class="time-text" title="${timeStr}">${timeStr}</div>
+                        </div>`;
+                    });
+
+                    // --- [新增逻辑] 处理标题栏按钮 ---
+                    const targetGeo = Core.state.lastClickedGeoCode || (sortedGeoCodes.length > 0 ? sortedGeoCodes[0] : null);
+
+                    // 构建跳转参数对象
+                    const jumpPayload = {
+                        target: 'map',
+                        params: {
+                            region: targetGeo,
+                            year: group.minStart + 1,
+                            regime: group.name
+                        }
+                    };
+
+                    // 获取并激活标题栏按钮
+                    const jumpBtn = document.getElementById('btn-jump-map-header');
+                    if (jumpBtn) {
+                        jumpBtn.classList.add('active-btn'); // 显示 (CSS Controlled)
+                        // 移除旧监听器 (通过克隆节点替换)
+                        const newBtn = jumpBtn.cloneNode(true);
+                        jumpBtn.parentNode.replaceChild(newBtn, jumpBtn);
+
+                        // 绑定新事件
+                        newBtn.onclick = () => {
+                            window.parent.postMessage({ type: "REQUEST_SWITCH", payload: jumpPayload }, "*");
+                        };
+                    }
+
+                    // --- [更新渲染] 移除内容区的大按钮 ---
+                    document.getElementById('editor-content').innerHTML = `
+                        <div class="regime-card" style="background: ${style.bg}; color: ${style.text};">
+                            <h3 class="regime-card-title">${group.name}</h3>
+                            
+                            <div class="regime-info-row">
+                                <span class="info-badge" title="Regime Code">Code: ${group.regimeCode}</span>
+                                <span class="info-badge" title="Tier Level">Tier: ${group.explicitTier}</span>
+                                <span class="info-badge" title="政权类型">Type: ${typeLabel}</span>
+                                <span class="info-badge" title="起源区域">Origin: ${originLabel}</span>
+                            </div>
+
+                            ${suzerainHtml}
+                        </div>
+                        
+                        <div class="section-box details-gap">
+                             <h4 class="section-title">统辖区域 (${sortedGeoCodes.length})</h4>
+                             <div class="custom-scrollbar" style="max-height:300px; overflow-y:auto; display:flex; flex-direction:column; gap:0.25rem;">${detailHtml}</div>
+                        </div>
+                    `;
+                },
+                populateSearchResults: function (term) {
+                    const container = document.getElementById('search-results');
+                    if (!term || term.length < 1) { container.style.display = 'none'; return; }
+
+                    const seen = new Set();
+                    const results = Core.state.regimeGroups.filter(g => {
+                        if (g.name.toLowerCase().includes(term) && !seen.has(g.name)) { seen.add(g.name); return true; }
+                        return false;
+                    }).slice(0, 10);
+
+                    if (results.length === 0) { container.style.display = 'none'; return; }
+
+                    container.innerHTML = '';
+                    results.forEach(g => {
+                        const div = document.createElement('div');
+                        div.className = 'search-item';
+                        div.innerHTML = `<span>${g.name}</span> <span style="font-size:9px; color:var(--slate-500); margin-left:0.5rem">(${g.minStart})</span>`;
+                        div.onclick = () => {
+                            this.jumpToRegime(g);
+                            document.getElementById('search-input').value = '';
+                            container.style.display = 'none';
+                            document.querySelectorAll('.era-dimmed').forEach(el => el.classList.remove('era-dimmed'));
+                        };
+                        container.appendChild(div);
+                    });
+                    container.style.display = 'block';
+                },
+                jumpToRegime: function (group) {
+                    const targetY = (group.minStart - APP_CONFIG.minYear) * Core.state.zoom;
+                    const renderArea = document.getElementById('render-area');
+                    const colWidth = renderArea.scrollWidth / Core.state.regions.length;
+                    const targetX = (group.centerCol + 0.5) * colWidth;
+
+                    document.getElementById('main-content').scrollTo({ top: targetY - 100, left: targetX - window.innerWidth / 2, behavior: 'smooth' });
+                    setTimeout(() => {
+                        Core.ui.setFocus(group.groupId);
+                        Core.ui.showDetails(group, Core.getStyle(group));
+                    }, 500);
+                }
+            },
+
+            toggleFeature: function (f) {
+                this.state.features[f] = !this.state.features[f];
+                document.getElementById('btn-' + f).classList.toggle('active');
+                if (f === 'connections') this.render.drawAll();
+            }
+        };
+
+        const collisionMgr = { rects: [], add: function (x, y, w, h, tier) { const n = { l: x + 1, t: y + 1, r: x + w - 1, b: y + h - 1 }; if (tier <= 1) { this.rects.push(n); return true; } for (let r of this.rects) if (n.l < r.r && n.r > r.l && n.t < r.b && n.b > r.t) return false; this.rects.push(n); return true; }, reset: function () { this.rects = [] } };
+
+        document.addEventListener('DOMContentLoaded', () => Core.init());
+    </script>
+</body>
+
+</html>

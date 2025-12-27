@@ -1,0 +1,2595 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>东亚历史地图 (v14.00)</title>
+
+    <script>
+        window.onerror = function (msg, url, line, col, error) {
+            if (msg.indexOf('Script error') > -1) return;
+            console.error(`❌ [CRASH] ${msg} (Line: ${line})`);
+            return false;
+        };
+    </script>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@600&family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@700;900&display=swap"
+        rel="stylesheet">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <style id="dynamic-styles"></style>
+
+    <style>
+        :root {
+            --panel-width: 450px;
+            --primary-color: #0f172a;
+            --accent-color: #e74c3c;
+            --label-size: 10px;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: "Microsoft YaHei", "SimHei", sans-serif;
+            background: #cdd2d5;
+            overflow: hidden;
+        }
+
+        /* Map */
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden !important;
+            position: fixed;
+            top: 0;
+            left: 0;
+            touch-action: none;
+        }
+
+        #map-wrapper {
+            position: absolute !important;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100% !important;
+            height: 100% !important;
+            z-index: 1;
+            transition: filter 0.5s ease;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        .vintage-mode .leaflet-tile-pane {
+            filter: sepia(0.6) contrast(1.1) brightness(0.9) grayscale(0.2);
+        }
+
+        .region-label {
+            color: #222;
+            font-weight: 800;
+            text-align: center;
+            white-space: nowrap;
+            pointer-events: none !important;
+            font-family: "SimHei", sans-serif;
+            -webkit-text-stroke: 3px white;
+            paint-order: stroke fill;
+            font-size: var(--label-size);
+            transition: opacity 0.3s, font-size 0.2s;
+            text-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+        }
+
+        /* 移动端详情面板：底部弹出 */
+        @media (max-width: 640px) {
+            .region-panel {
+                top: auto !important;
+                bottom: 0 !important;
+                right: 0 !important;
+                width: 100% !important;
+                height: 50vh !important;
+                border-left: none;
+                border-top: 1px solid #334155;
+                transform: translateY(100%);
+            }
+
+            .region-panel.open {
+                transform: translateY(0);
+            }
+        }
+
+        /* Effects */
+        .glow-effect path {
+            animation: pulse-gold 2s infinite;
+            stroke: #f1c40f !important;
+            stroke-width: 3px !important;
+            stroke-opacity: 1 !important;
+            fill-opacity: 0.6 !important;
+        }
+
+        @keyframes pulse-gold {
+            0% {
+                filter: drop-shadow(0 0 2px rgba(241, 196, 15, 0.5));
+            }
+
+            50% {
+                filter: drop-shadow(0 0 8px rgba(241, 196, 15, 0.9));
+            }
+
+            100% {
+                filter: drop-shadow(0 0 2px rgba(241, 196, 15, 0.5));
+            }
+        }
+
+        .conflict-effect path {
+            stroke: #d35400 !important;
+            stroke-width: 2px !important;
+            stroke-dasharray: 6, 6 !important;
+            fill-opacity: 0.7 !important;
+        }
+
+        .ctrl-btn {
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.95);
+            border: none;
+            border-bottom: 1px solid #ddd;
+            cursor: pointer;
+            font-size: 20px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #444;
+            transition: background 0.1s;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .ctrl-btn:last-child {
+            border-bottom: none;
+        }
+
+        .ctrl-btn:hover {
+            background: #f4f4f4;
+        }
+
+        /* Context Toolbar */
+        #context-toolbar {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%) translateY(150%);
+            background: white;
+            padding: 10px 15px;
+            border-radius: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            z-index: 1100;
+            display: flex;
+            gap: 10px;
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            max-width: 90%;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        #context-toolbar.active {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .ctx-btn {
+            padding: 8px 16px;
+            border-radius: 20px;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            background: #f0f2f5;
+            color: #333;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+
+        .ctx-btn.primary {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .ctx-btn.danger {
+            background: #fff5f5;
+            color: #e74c3c;
+            border: 1px solid #ffebeb;
+        }
+
+        /* Panels */
+        #ai-panel {
+            position: absolute;
+            top: 0;
+            right: calc(var(--panel-width) * -1.2);
+            width: var(--panel-width);
+            max-width: 100vw;
+            box-sizing: border-box;
+            height: 100vh;
+            background: #fff;
+            box-shadow: -5px 0 25px rgba(0, 0, 0, 0.15);
+            z-index: 2000;
+            transition: right 0.3s ease-in-out;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #ai-panel.open {
+            right: 0;
+        }
+
+        #ai-panel.half-mode {
+            height: 50vh;
+            top: auto !important;
+            bottom: 0 !important;
+            right: 0 !important;
+            width: 100% !important;
+            border-top: 4px solid var(--primary-color);
+        }
+
+        #ai-panel.half-mode .geo-analysis-section {
+            display: none;
+        }
+
+        .ai-header {
+            padding: 12px 15px;
+            background: var(--primary-color);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            z-index: 2002;
+            flex-shrink: 0;
+        }
+
+        /* [新增] AI 按钮样式 */
+        .ai-btn-group {
+            margin-top: 10px;
+            border-top: 1px dashed #eee;
+            padding-top: 10px;
+        }
+
+        .btn-ai {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            width: 100%;
+            border: none;
+            padding: 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            transition: 0.2s;
+        }
+
+        .btn-ai:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .btn-ai:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
+
+        #ai-result-box {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #475569;
+            background: #f1f5f9;
+            padding: 8px;
+            border-radius: 4px;
+            border-left: 3px solid #8b5cf6;
+            display: none;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 900;
+            font-family: 'Noto Serif SC', serif;
+            margin-right: 10px;
+        }
+
+        .header-subtitle {
+            font-size: 11px;
+            opacity: 0.8;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .panel-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .panel-btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            border-radius: 4px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        #region-info {
+            flex: 1;
+            overflow-y: hidden;
+            display: flex;
+            flex-direction: column;
+            background: #fff;
+            position: relative;
+        }
+
+        .geo-analysis-section {
+            background: white;
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+            flex-shrink: 0;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+
+        .section-header {
+            font-size: 14px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin: 0 0 10px 0;
+            padding: 6px 10px;
+            background: #edf2f7;
+            border-left: 4px solid var(--accent-color);
+            border-radius: 0 4px 4px 0;
+        }
+
+        .analysis-text {
+            font-size: 13px;
+            color: #4a5568;
+            line-height: 1.6;
+            text-align: justify;
+            margin-bottom: 20px;
+            padding: 0 5px;
+            font-family: sans-serif;
+        }
+
+        /* Timeline */
+        .timeline-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: #222;
+            display: flex;
+            flex-direction: row;
+        }
+
+        .timeline-grid-bg {
+            position: absolute;
+            top: 0;
+            left: 50px;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .timeline-grid-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.1);
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+        }
+
+        .timeline-axis-container {
+            width: 50px;
+            background: #1a1a1a;
+            border-right: 1px solid #333;
+            position: relative;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .timeline-axis-scroll {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .timeline-year-mark {
+            position: absolute;
+            right: 8px;
+            font-size: 10px;
+            color: #00e5ff;
+            transform: translateY(-50%);
+            font-family: monospace;
+            text-shadow: 0 0 2px rgba(0, 229, 255, 0.5);
+            opacity: 0.8;
+        }
+
+        .waterfall-scroll-area {
+            flex: 1;
+            overflow-y: scroll;
+            position: relative;
+            scroll-behavior: auto;
+            z-index: 2;
+        }
+
+        .waterfall-content {
+            position: relative;
+            width: 100%;
+            min-height: 100%;
+        }
+
+        #fixed-cursor {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 0;
+            z-index: 50;
+            pointer-events: none;
+            border-top: 2px solid rgba(231, 76, 60, 0.8);
+            box-shadow: 0 0 8px rgba(231, 76, 60, 0.8);
+        }
+
+        #cursor-year-btn {
+            position: absolute;
+            left: 5px;
+            top: -14px;
+            background: var(--primary-color);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-family: monospace;
+            font-size: 13px;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+            pointer-events: auto;
+            cursor: ns-resize;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        /* Timeline Slices */
+        .regime-slice {
+            position: absolute;
+            border: none;
+            display: block;
+            cursor: pointer;
+            box-sizing: border-box;
+            border-radius: 2px;
+            transition: none;
+        }
+
+        .regime-slice:hover {
+            filter: brightness(1.2);
+            z-index: 9999 !important;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .regime-slice.active-locked {
+            z-index: 9999 !important;
+            border: 2px solid #fff !important;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.6);
+        }
+
+        .regime-slice::after {
+            content: '';
+            position: absolute;
+            top: -10px;
+            bottom: -10px;
+            left: 0;
+            right: 0;
+            z-index: 1;
+            pointer-events: auto;
+        }
+
+        .slice-label-sticky {
+            position: sticky;
+            top: 0;
+            width: 100%;
+            pointer-events: none;
+            text-align: center;
+            padding-top: 2px;
+            z-index: 30;
+        }
+
+        .slice-text {
+            color: rgba(255, 255, 255, 0.95);
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+            padding: 0 2px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            line-height: 1;
+            max-width: 100%;
+            overflow: hidden;
+            position: relative;
+            z-index: 31;
+        }
+
+        .regime-slice.tiny-slice {
+            overflow: visible !important;
+        }
+
+        .regime-slice.tiny-slice .slice-label-sticky {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%) !important;
+            padding: 0;
+        }
+
+        .font-tier-1 {
+            font-family: 'Ma Shan Zheng', cursive;
+            font-weight: 400;
+            letter-spacing: 2px;
+        }
+
+        .font-tier-2 {
+            font-family: 'Noto Serif SC', serif;
+            font-weight: 900;
+        }
+
+        .font-tier-3 {
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+        }
+
+        /* Modals */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 5000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(3px);
+        }
+
+        .modal.show {
+            display: flex;
+            animation: fadeIn 0.2s;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            width: 450px;
+            max-width: 90%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(30px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .rd-header {
+            border-bottom: 2px solid #eee;
+            padding-bottom: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+        }
+
+        .rd-title {
+            font-size: 22px;
+            font-weight: 900;
+            font-family: 'Noto Serif SC', serif;
+            color: var(--primary-color);
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+
+        /* 新增：标题栏跳转按钮 */
+        .header-jump-btn {
+            font-size: 12px;
+            color: white;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            border: none;
+            padding: 4px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: auto;
+            margin-right: 10px;
+        }
+
+        .header-jump-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            background: linear-gradient(135deg, #60a5fa, #3b82f6);
+        }
+
+        .rd-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .rd-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+        }
+
+        .rd-label {
+            font-size: 11px;
+            color: #888;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .rd-value {
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .rd-desc-box {
+            background: #fffbf0;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #fceeb5;
+            color: #555;
+            line-height: 1.6;
+            font-size: 14px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        /* Switch Modal */
+        #switch-modal {
+            position: absolute;
+            z-index: 6000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            width: 220px;
+            text-align: center;
+            display: none;
+            top: 0;
+            left: 0;
+        }
+
+        #switch-modal.show {
+            display: block;
+            animation: popIn 0.2s;
+        }
+
+        #switch-modal.modal-up::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -8px;
+            border-width: 8px;
+            border-style: solid;
+            border-color: white transparent transparent transparent;
+        }
+
+        #switch-modal.modal-down::after {
+            content: '';
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            margin-left: -8px;
+            border-width: 8px;
+            border-style: solid;
+            border-color: transparent transparent white transparent;
+        }
+
+        #switch-modal.align-left::after {
+            left: 20px;
+            margin-left: 0;
+        }
+
+        #switch-modal.align-right::after {
+            left: auto;
+            right: 20px;
+            margin-left: 0;
+        }
+
+        #toast-container {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 9999;
+            pointer-events: none;
+        }
+
+        .toast {
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            animation: fadeUp 0.3s;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Mobile Fixes */
+        #map-wrapper {
+            z-index: 1 !important;
+            position: absolute !important;
+            top: 0;
+            left: 0;
+        }
+
+        .version-watermark,
+        #switch-modal,
+        #ai-panel {
+            z-index: 5000 !important;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+            pointer-events: auto;
+        }
+
+        #toast-container {
+            z-index: 99999 !important;
+            transform: translateZ(0);
+        }
+
+        @media (max-width: 600px) {
+            #ai-panel {
+                width: 100%;
+                right: -100%;
+            }
+
+            #ai-panel.open {
+                right: 0;
+            }
+
+            .modal-content {
+                width: 95%;
+            }
+
+            .top-bar {
+                right: 5px;
+                gap: 4px;
+            }
+
+            .btn {
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+        }
+
+        /* Dark Mode Overrides */
+        .modal-content,
+        #ai-panel,
+        #switch-modal {
+            background-color: #1e293b !important;
+            color: #cbd5e1 !important;
+            border: 1px solid #334155 !important;
+        }
+
+        .header-title,
+        .rd-title,
+        .section-header {
+            color: #e2e8f0 !important;
+        }
+
+        .rd-value {
+            color: #f8fafc !important;
+            font-weight: bold;
+        }
+
+        .geo-analysis-section,
+        .rd-desc-box {
+            background-color: #0f172a !important;
+            border-color: #334155 !important;
+            color: #cbd5e1 !important;
+        }
+
+        .analysis-text {
+            color: #cbd5e1 !important;
+        }
+
+        .rd-label {
+            color: #94a3b8 !important;
+        }
+
+        .ai-header {
+            background-color: #0f172a !important;
+            border-bottom: 1px solid #334155;
+        }
+
+        .section-header {
+            background-color: #1e293b !important;
+            border-left: 4px solid #3b82f6 !important;
+        }
+
+        .rd-item {
+            background-color: #0f172a !important;
+            border: 1px solid #334155 !important;
+        }
+
+        .rd-desc-box {
+            background-color: #0f172a !important;
+            border: 1px solid #334155 !important;
+            color: #cbd5e1 !important;
+            scrollbar-color: #475569 #0f172a;
+        }
+
+        .modal-content>div[style*="color:#555"] {
+            color: #94a3b8 !important;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="toast-container"></div>
+    <div id="map-wrapper" class="vintage-mode">
+        <div id="map"></div>
+    </div>
+
+    <div id="switch-modal">
+        <div style="font-weight:bold; margin-bottom:5px; font-size:14px; color:#94a3b8;">跳转至该关联板块？</div>
+        <div id="switch-target-name" style="font-size:13px; color:#e74c3c; font-weight:bold; margin-bottom:10px;">--
+        </div>
+        <button class="btn active" style="width:100%;" onclick="App.safeExec(App.confirmSwitchRegion)">🚀 确认跳转</button>
+    </div>
+
+    <div id="context-toolbar"></div>
+
+    <div id="ai-panel">
+        <div class="ai-header">
+            <div style="display:flex; align-items:baseline;">
+                <div id="panel-title" class="header-title">--</div>
+                <div id="panel-subtitle" class="header-subtitle">--</div>
+            </div>
+            <div class="panel-controls">
+                <button class="panel-btn" onclick="App.safeExec(UICtrl.togglePanelSize)">⇳ 视窗</button>
+                <button class="panel-btn close-btn" onclick="App.safeExec(UICtrl.closeAIPanel)">✕</button>
+            </div>
+        </div>
+        <div id="region-info">
+            <div class="geo-analysis-section">
+                <div class="section-header">🗺️ 地理范围定义</div>
+                <div id="geo-scope" class="analysis-text">--</div>
+                <div class="section-header">⚔️ 地缘战略分析</div>
+                <div id="geo-strategy" class="analysis-text">--</div>
+            </div>
+            <div class="section-header"
+                style="background:#222; color:#00e5ff; border:none; padding-left:15px; margin:0;">
+                🕰️ 历史演变 <span style="font-weight:normal; font-size:11px; opacity:0.7;">(单击锁定 / 再次单击详情)</span>
+            </div>
+            <div class="timeline-container">
+                <div class="timeline-axis-container">
+                    <div class="timeline-axis-scroll" id="timeline-axis-scroll">
+                        <div id="timeline-axis-content" style="position:relative;"></div>
+                    </div>
+                </div>
+                <div class="waterfall-scroll-area" id="waterfall-scroll">
+                    <div id="timeline-grid-bg" class="timeline-grid-bg"></div>
+                    <div class="waterfall-content" id="waterfall-content"></div>
+                </div>
+                <div id="fixed-cursor">
+                    <div id="cursor-year-btn">2024</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="regime-modal" class="modal">
+        <div class="modal-content">
+            <div class="rd-header">
+                <div class="rd-title" id="rm-name">--</div>
+                <button class="btn"
+                    onclick="document.getElementById('regime-modal').classList.remove('show')">✕</button>
+            </div>
+            <div class="rd-grid">
+                <div class="rd-item"><span class="rd-label">政权类型</span><span class="rd-value" id="rm-type">--</span>
+                </div>
+                <div class="rd-item"><span class="rd-label">起源板块</span><span class="rd-value" id="rm-origin">--</span>
+                </div>
+                <div class="rd-item"><span class="rd-label">宗主国</span><span class="rd-value" id="rm-suzerain">--</span>
+                </div>
+                <div class="rd-item"><span class="rd-label">存续时间</span><span class="rd-value" id="rm-time">--</span>
+                </div>
+            </div>
+            <div style="font-weight:bold; margin-bottom:5px; color:#555;">历史描述</div>
+            <div class="rd-desc-box" id="rm-desc">--</div>
+
+            <div class="ai-btn-group">
+                <button id="btn-ai-check" class="btn-ai" onclick="App.safeExec(App.askGemini)">
+                    <span>✨ AI 历史核查/简述</span>
+                </button>
+                <div id="ai-result-box"></div>
+            </div>
+
+            <div id="ai-container"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
+
+    <script>
+        // --- Logger (Buffer System) ---
+        const Logger = {
+            buffer: [], ready: false,
+            log(msg, type = 'info') { console.log(`[${type.toUpperCase()}] ${msg}`); },
+            info(msg) { this.log(msg, 'info'); },
+            warn(msg) { this.log(msg, 'warn'); },
+            error(msg) { this.log(msg, 'error'); },
+            sys(msg) { this.log(msg, 'sys'); },
+            ui(msg) { this.log(msg, 'ui'); }
+        };
+
+        const CONFIG = { pixelsPerYear: 2 };
+        let USER_GEMINI_KEY = ""; // Managed by Parent if needed, or placeholder
+
+        const Data = {
+            regimes: [], // [新增] 必须初始化这个数组
+            regions: [
+                { code: 110, name: "关中", group: "黄河核心" }, { code: 120, name: "河洛", group: "黄河核心" }, { code: 130, name: "幽燕", group: "黄河核心" }, { code: 140, name: "冀赵", group: "黄河核心" }, { code: 150, name: "齐鲁", group: "黄河核心" }, { code: 160, name: "河东", group: "黄河核心" }, { code: 170, name: "河西", group: "黄河核心" }, { code: 180, name: "河套", group: "黄河核心" }, { code: 190, name: "徐淮", group: "黄河核心" },
+                { code: 210, name: "吴地", group: "长江核心" }, { code: 220, name: "越地", group: "长江核心" }, { code: 230, name: "江淮", group: "长江核心" }, { code: 240, name: "江西", group: "长江核心" }, { code: 250, name: "两湖", group: "长江核心" }, { code: 260, name: "巴蜀", group: "长江核心" }, { code: 270, name: "汉中", group: "长江核心" },
+                { code: 310, name: "岭南", group: "南方边疆" }, { code: 320, name: "福建", group: "南方边疆" }, { code: 330, name: "台湾", group: "南方边疆" }, { code: 340, name: "云贵", group: "南方边疆" }, { code: 350, name: "安南", group: "南方边疆" },
+                { code: 410, name: "卫藏", group: "青藏高原" }, { code: 420, name: "安多", group: "青藏高原" }, { code: 430, name: "康区", group: "青藏高原" }, { code: 440, name: "阿里", group: "青藏高原" },
+                { code: 510, name: "东疆", group: "西域新疆" }, { code: 520, name: "准噶尔", group: "西域新疆" }, { code: 530, name: "伊犁", group: "西域新疆" }, { code: 540, name: "塔里木", group: "西域新疆" }, { code: 550, name: "葱岭以西", group: "西域新疆" },
+                { code: 610, name: "漠南", group: "蒙古草原" }, { code: 620, name: "漠北", group: "蒙古草原" },
+                { code: 710, name: "外东北", group: "东北地区" }, { code: 720, name: "松嫩", group: "东北地区" }, { code: 730, name: "辽西", group: "东北地区" }, { code: 740, name: "辽东", group: "东北地区" },
+                { code: 810, name: "朝鲜西北", group: "朝鲜半岛" }, { code: 820, name: "朝鲜东北", group: "朝鲜半岛" }, { code: 830, name: "朝鲜中西", group: "朝鲜半岛" }, { code: 840, name: "朝鲜西南", group: "朝鲜半岛" }, { code: 850, name: "朝鲜东南", group: "朝鲜半岛" },
+                { code: 910, name: "九州", group: "日本列岛" }, { code: 920, name: "西国", group: "日本列岛" }, { code: 930, name: "东国", group: "日本列岛" }, { code: 940, name: "奥羽", group: "日本列岛" }, { code: 950, name: "北海道", group: "日本列岛" }, { code: 960, name: "琉球", group: "日本列岛" }
+            ],
+            coords: {
+                "110": [[36.6, 110.2], [34.5, 110.5], [33.6013, 110.2862], [34.2922, 106.5266], [33.038, 104.3375], [35.1088, 104.1502], [36.1088, 105.5308]],
+                "120": [[34.5, 110.5], [35.427, 113.3044], [36.1252, 113.6554], [35.912, 115.7758], [35.2, 115.5], [32.4, 115], [32.4997, 110.0271]],
+                "130": [[41.6897, 114.4397], [42.5391, 117.8568], [39.9225, 119.6818], [39.1234, 118.926], [39.1225, 117.8715], [38.6137, 117.558], [39.0449, 114.0589]],
+                "140": [[39.0449, 114.0589], [38.6137, 117.558], [38.2551, 117.8488], [37.5, 116.4], [35.912, 115.7758], [36.1252, 113.6554]],
+                "150": [[37.4, 122.7], [36.8867, 122.4892], [36.5629, 120.9623], [35.0487, 119.2383], [34.8, 118], [35.2, 115.5], [37.5, 116.4], [38.2551, 117.8488]],
+                "160": [[39.6, 110.8], [40.5423, 114.2727], [36.1252, 113.6554], [35.427, 113.3044], [34.5, 110.5], [36.6, 110.2]],
+                "170": [[41.6867, 95.0683], [40.5, 100], [39.5, 100.5], [38.7, 101.9], [39.5, 103.4], [39.1, 104.2], [38.0376, 103.3625], [37.3296, 104.7138], [36.1088, 105.5308], [35.1088, 104.1502], [35.4947, 102.7435], [36.2329, 103.0212], [37.0784, 102.4885], [38.2222, 100.183], [39.3, 92.4]],
+                "180": [[39.381, 106.2048], [39.6, 110.8], [36.6, 110.2], [36.1072, 105.5148], [37.3296, 104.7138], [38, 105.5]],
+                "190": [[35.2, 115.5], [34.8, 118], [35.0487, 119.2383], [34.2556, 120.3144], [33.3, 120.7], [32.4, 115]],
+                "210": [[32.9395, 118.41], [33.3, 120.7], [32.1, 121.8], [30.8, 122], [30.6, 121.1], [30.8, 119.8], [31.9, 118.5]],
+                "220": [[30.8, 119.8], [30.6, 121.1], [30, 122.4], [29.1, 121.9], [27.1568, 120.546], [28.3, 118.4], [29.7, 117.5]],
+                "230": [[32.4, 115], [32.9393, 118.4087], [31.9, 118.5], [30.8, 119.8], [29.7, 117.5], [29.7, 115.1]],
+                "240": [[29.7, 115.1], [29.7, 117.5], [28.3, 118.4], [27.1, 117], [25, 116], [25.3, 113.7], [29, 114]],
+                "250": [[32.4997, 110.0271], [32.4, 115], [29.7, 115.1], [29, 114], [25.3, 113.7], [26, 109], [28, 109]],
+                "260": [[33.038, 104.3375], [32.4, 107.3], [31.5122, 109.7976], [28, 109], [28, 105], [28, 102.7002], [30.5812, 102.9419]],
+                "270": [[34.2922, 106.5266], [33.5983, 110.2855], [31.5122, 109.7976], [32.4, 107.3], [33.038, 104.3375]],
+                "310": [[26, 109], [25.3, 113.7], [25, 116], [23.4005, 117.1429], [22.9306, 116.5054], [21.3676, 110.8886], [20.5, 110.5], [19.7634, 111.0439], [18.9, 110.6], [18.1, 109.6], [18.4476, 108.6891], [19.2767, 108.609], [20.237, 109.9093], [21.4372, 109.5299], [21.5, 108], [21.9599, 106.6984], [23.0645, 105.6254]],
+                "320": [[28.3, 118.4], [27.1568, 120.546], [25.7, 119.8], [24.4, 118.3], [23.4005, 117.1429], [25, 116], [27.1, 117]],
+                "330": [[25.0405, 121.0245], [25.3075, 121.5352], [25.0015, 122.0125], [23.4197, 121.4976], [21.9238, 120.7819], [23.0733, 120.0187], [23.7012, 120.1025]],
+                "340": [[28, 98], [28, 109], [26, 109], [23.0645, 105.6254], [22.458, 102.0462], [21.2, 101.4], [22.2, 99.2], [24.4, 97.7], [26.4919, 98.7571]],
+                "350": [[22.458, 102.0462], [23.0645, 105.6254], [21.9599, 106.6984], [21.5, 108], [19.7, 105.8], [18.8543, 105.7544], [17.5602, 106.5674], [16.4045, 107.9736], [15.3266, 108.8086], [15.2418, 107.5122], [17.1618, 105.7544], [18.9375, 104.7217], [20.3858, 104.1943]],
+                "410": [[33.8689, 89.8371], [33, 92], [31.6908, 97], [28, 98], [28.2541, 95.6743], [26.9, 92.9], [27.4673, 88.7832], [28.7353, 84.4833], [32.027, 84.4907]],
+                "420": [[39.3, 92.4], [38.2222, 100.183], [37.0784, 102.4885], [36.2329, 103.0212], [35.4947, 102.7435], [35.1088, 104.1502], [33.038, 104.3375], [33.1949, 101.1155], [34.1229, 98.0284], [31.6908, 97], [33, 92], [33.8689, 89.8371], [36.0933, 89.7114]],
+                "430": [[34.1229, 98.0284], [33.1949, 101.1155], [33.038, 104.3375], [30.5812, 102.9419], [28, 102.7002], [28, 98], [31.6908, 97]],
+                "440": [[35.3392, 80.6891], [36.0933, 89.7114], [33.8689, 89.8371], [32.027, 84.4907], [28.7353, 84.4833], [30.1497, 81.3359], [31.5849, 78.8339], [32.5808, 78.5001], [32.6781, 79.2731], [33.7326, 78.7797], [34.5055, 78.5814], [34.4788, 79.8016]],
+                "510": [[45, 85], [45.5825, 90.6766], [44.8943, 93.7163], [42.9006, 96.3636], [39.3, 92.4], [42, 88], [43, 85]],
+                "520": [[49, 86.7], [47.603, 90.376], [45.5825, 90.6766], [45, 85], [45.5, 80]],
+                "530": [[45.5, 80], [45, 85], [43, 85], [42, 80]],
+                "540": [[40.5, 75], [42, 80], [43, 85], [42, 88], [39.3, 92.4], [36.0933, 89.7114], [35.3392, 80.6891], [34.4788, 79.8016], [34.5055, 78.5814], [35.4694, 78.0295], [36, 75]],
+                "550": [[40.5, 68], [40.5, 75], [36, 75], [36, 67.9]],
+                "610": [[41.6867, 95.0683], [42.9006, 96.3636], [42.6, 101.3], [42.4125, 107.3039], [45.7752, 116.2867], [46.5582, 117.6412], [46.6388, 119.4317], [47.9922, 118.5682], [47.9216, 115.5802], [49.8477, 116.7364], [49.8307, 118.4838], [51.2811, 119.8111], [49.0667, 122.3438], [44.9803, 120.7837], [42.5391, 117.8568], [41.6897, 114.4397], [40.5423, 114.2727], [39.6, 110.8], [39.381, 106.2048], [38, 105.5], [37.3296, 104.7138], [38.0376, 103.3625], [39.1, 104.2], [39.5, 103.4], [38.7, 101.9], [39.5, 100.5], [40.5, 100]],
+                "620": [[52.2682, 98.833], [51.618, 102.1729], [50.6808, 103.2715], [50.9307, 108.6768], [50.0642, 112.5], [49.8477, 116.7364], [47.9216, 115.5802], [47.9922, 118.5682], [46.6388, 119.4317], [46.5582, 117.6412], [45.7752, 116.2867], [42.4125, 107.3039], [42.6, 101.3], [42.9006, 96.3636], [44.8943, 93.7163], [45.5825, 90.6766], [47.603, 90.376], [49, 86.7], [51.0414, 92.373], [51.0138, 98.3057]],
+                "710": [[54.2652, 122.915], [54.8387, 124.3652], [54.9271, 128.4961], [54.3421, 130.1221], [54.2396, 133.5498], [54.8766, 135.0879], [55.1035, 137.6367], [54.2909, 139.3506], [54.3678, 143.1738], [49.2821, 144.3164], [45.8747, 143.4814], [45.9664, 142.0752], [48.0634, 139.6802], [43.4848, 135.2197], [42.6986, 133.2092], [42.9243, 131.8469], [42.3058, 130.6769], [42.7002, 130.4372], [42.9, 131.1], [44.9, 131.2], [45.2772, 131.9766], [45.0544, 133.036], [48.3657, 135.0094], [48.8, 130.7], [51.1, 126.9], [53.1, 125.6], [53.5366, 123.4544], [53.2396, 120.8385], [53.4357, 119.2676]],
+                "720": [[51.2811, 119.8111], [53.2396, 120.8385], [53.5366, 123.4544], [53.1, 125.6], [51.1, 126.9], [48.8, 130.7], [48.3657, 135.0094], [45.0544, 133.036], [45.2772, 131.9766], [44.9, 131.2], [43.4851, 131.1289], [42.29, 125.2992], [43.4022, 123.5197], [42.5391, 117.8568], [44.9803, 120.7837], [49.0667, 122.3438]],
+                "730": [[43.4022, 123.5197], [40.8298, 121.683], [39.9225, 119.6818], [42.5391, 117.8568]],
+                "740": [[43.4022, 123.5197], [42.29, 125.2992], [43.4849, 131.1289], [42.9, 131.1], [42.7002, 130.4372], [41.5, 126.5], [40, 124.5], [38.8, 121.3], [40.8298, 121.683]],
+                "810": [[40, 124.5], [41.5, 126.5], [38.3, 126.4], [37.9, 125]],
+                "820": [[41.5, 126.5], [42.7002, 130.4372], [42.3058, 130.6769], [41.9309, 129.9518], [40.8, 129.7], [39.8, 127.5], [38.6, 128.3], [38.5, 127.3], [38.3, 126.4]],
+                "830": [[37.9, 125], [38.3, 126.4], [38.5, 127.3], [37, 128], [36.7, 126.3]],
+                "840": [[36.7, 126.3], [37, 128], [34.6, 127.8], [34.1982, 125.9473]],
+                "850": [[38.5, 127.3], [38.6, 128.3], [37.2, 129.5], [35.3, 129.6], [34.6, 127.8], [37, 128]],
+                "910": [[33.8, 129.6], [33.9, 130.7], [33.7, 131.6], [32.9, 132], [31.4, 131.4], [31, 130.7], [31.3, 130.1], [32.1, 130.1], [32.7, 128.6]],
+                "920": [[34.2, 130.8], [35.5, 133], [36, 136], [34.1, 136.9], [32.8, 132.8], [33.9, 132]],
+                "930": [[36, 136], [37.5, 136.7], [37.5, 138.4], [36.5, 140.7], [35.6216, 140.9546], [34.6694, 139.3726], [34.1, 136.9]],
+                "940": [[41.4, 141.3], [39.6, 142.2], [36.5, 140.7], [37.5, 138.4], [38.1, 139.4], [39.3, 139.8], [40.8, 140.1]],
+                "950": [[43.7, 140.8], [45.6, 141.6], [44.2, 144.2], [45.7675, 148.645], [45.3676, 149.0186], [43.2, 145.5], [42.0167, 143.3057], [41.4757, 140.0317], [42.6, 139.6]],
+                "960": [[27.8682, 128.0566], [28.5363, 129.353], [28.3431, 130.0671], [26.0173, 127.9358], [26.2343, 126.6284]]
+            },
+            analysis: {
+                110: { scope: "关中盆地，东至潼关，西至宝鸡，南依秦岭，北接黄土高原。", strategy: "四塞之国，金城千里。得关中者得天下之基，进可攻退可守，是西汉、隋、唐的立国核心。" },
+                120: { scope: "洛阳盆地及周边，西起崤函，东至荥阳，南界伏牛山，北临黄河。", strategy: "天下之中，山河拱戴。控制河洛即控制中原腹心，是连接关中与关东的枢纽，历代东都所在。" },
+                130: { scope: "北京平原及周边，北枕燕山，西倚太行，南控华北平原。", strategy: "幽燕之地，控扼南北。既是农耕文明抵御游牧的防线，也是游牧民族南下中原的跳板（辽金元清）。" },
+                140: { scope: "河北平原中南部，太行山以东，黄河以北。", strategy: "自古多慷慨悲歌之士。地势平坦，利于骑兵驰骋，是北方经济重地和兵源基地，袁绍、窦建德根据地。" },
+                150: { scope: "山东丘陵及周边平原，泰山为中心，三面环海。", strategy: "负海带河，鱼盐之利。齐鲁文化昌盛，经济富庶，地势相对独立，易于形成割据势力（如曹操初起、李纳）。" },
+                160: { scope: "表里山河，山西全境。北控雁门，南屏黄河，东倚太行，西临吕梁。", strategy: "华夏龙脊，战略高地。 居高临下俯瞰华北平原，进可攻退可守，是唐朝龙兴之地（太原），也是北方防线的核心支撑。" },
+                170: { scope: "河西走廊，乌鞘岭以西，玉门关以东。", strategy: "断匈奴右臂，通西域咽喉。中原王朝经营西域的生命线，凉州铁骑的产地。" },
+                180: { scope: "黄河“几”字弯内的河套平原。", strategy: "黄河百害，唯富一套。水草丰美，宜农宜牧，是游牧与农耕反复争夺的战略前沿。" },
+                190: { scope: "徐州及淮北地区，黄淮海平原交汇处。", strategy: "兵家必争之地。南国门户，北国锁钥，五省通衢，历代南北战争的主战场。" },
+                210: { scope: "太湖平原及长江三角洲，南京至上海一带。", strategy: "江东沃野，财赋之地。依托长江天险和太湖水网，利于割据偏安（东吴、南朝、南唐），后期为经济重心。" },
+                220: { scope: "浙闽丘陵北部，钱塘江流域，宁绍平原。", strategy: "越甲三千可吞吴。山川阻隔，民风彪悍，经济发达，是东南沿海的重要根据地（越国、吴越国）。" },
+                230: { scope: "长江中下游江淮之间，合肥、巢湖一带。", strategy: "守江必守淮。南北对峙的缓冲区，南方政权保卫长江防线的核心前沿。" },
+                240: { scope: "赣江流域，鄱阳湖平原及周边山区。", strategy: "吴头楚尾，粤户闽庭。连接长江与岭南的通道，群山环绕，相对封闭安定的后方。" },
+                250: { scope: "长江中游，涵盖江汉平原、洞庭湖流域及湘江中下游。", strategy: "湖广熟，天下足。 九省通衢，南北枢纽。北据襄阳以抗中原，南抚长沙以控蛮越，是经济重心南移后的核心粮仓。" },
+                260: { scope: "四川盆地（川渝地区），包含成都平原与川东岭谷。", strategy: "天府之国，四塞之地。 兼具“蜀”之富庶与“巴”之险要，依仗剑阁、三峡之险，既是独立的割据堡垒，也是统一天下的后勤基地。" },
+                270: { scope: "汉中盆地，秦岭与大巴山之间。", strategy: "秦蜀咽喉。北伐关中的跳板，南卫巴蜀的屏障，汉高祖龙兴之地，诸葛亮北伐基地。" },
+                310: { scope: "五岭以南，珠江流域，两广地区。", strategy: "岭南瘴气，天高皇帝远。物产独特，海外贸易窗口，中原大乱时的避难所（南越国、南汉）。" },
+                320: { scope: "福建丘陵，闽江流域。", strategy: "八山一水一分田。地形破碎，易守难攻，海洋文化浓厚，割据势力（闽越、闽国）偏安一隅。" },
+                330: { scope: "台湾岛及澎湖列岛。", strategy: "七省藩篱，东南锁钥。海防重地，郑氏抗清基地，近代海权博弈焦点。" },
+                340: { scope: "云贵高原，横断山脉。", strategy: "西南屏障。地形复杂，民族众多，南诏、大理依险而立，与中原王朝长期并存。" },
+                350: { scope: "中南半岛东岸，北起红河三角洲，南抵湄公河口（今越南全境）。", strategy: "南天锁钥，从藩属到独立。 核心区在红河平原，历史上长期为中国郡县或藩属。地势狭长，历史上不断向南扩张蚕食占城与真腊故地。" },
+                410: { scope: "青藏高原中南部，包含卫（拉萨/山南）、藏（日喀则）及东部羌塘（那曲）。", strategy: "雪域腹心，政教中枢。东部卫藏是吐蕃王朝、萨迦巴、帕竹、甘丹颇章的核心控制区，人口稠密，农业相对发达，是高原政治与宗教的绝对中心。" },
+                420: { scope: "安多地区，青海湖及黄河上游。", strategy: "羌人故地。连接西藏与内地的通道，吐谷浑曾在此繁衍，唐蕃古道必经之地。" },
+                430: { scope: "康区，横断山脉峡谷地带。", strategy: "茶马古道。汉藏交汇的走廊，地形极其险峻，各大河流并流之地。" },
+                440: { scope: "冈底斯山脉以西，包含阿里高原及西部羌塘无人区，西接克什米尔。", strategy: "高原之巅，古格故地。苯教文明（象雄）发源地，吐蕃崩溃后古格王朝在此延续数百年。地广人稀，扼守通往西域与南亚（克什米尔/拉达克）的高原通道。" },
+                510: { scope: "吐鲁番盆地及哈密，东疆门户。", strategy: "西域咽喉。进入新疆的第一站，高昌国故地，汉唐经略西域的桥头堡。" },
+                520: { scope: "准噶尔盆地，北疆地区。", strategy: "游牧天选。水草丰茂，是匈奴、突厥、准噶尔汗国争夺的战略牧场。" },
+                530: { scope: "伊犁河谷。", strategy: "西域湿岛。气候宜人，连接中亚，是乌孙、西辽、准噶尔的核心统治中心。" },
+                540: { scope: "塔里木盆地边缘绿洲。", strategy: "丝路南道。城郭诸国林立（于阗、龟兹），沙漠阻隔，由于水源限制，呈点状分布。" },
+                550: { scope: "帕米尔高原以西，河中地区边缘及费尔干纳盆地东部。", strategy: "东西文明交汇的十字路口，大国博弈的边缘地带，汉唐经营西域的极限触角（碎叶、怛罗斯）。" },
+                610: { scope: "戈壁以南，阴山以北。", strategy: "控弦百万。直面中原长城防线，是游牧民族南下牧马的集结地，北魏、辽、元发祥相关。" },
+                620: { scope: "戈壁以北，贝加尔湖以南。", strategy: "龙庭所在。游牧民族的圣地和后方，匈奴单于庭、突厥牙帐、蒙古哈拉和林所在，战略纵深极深。" },
+                710: { scope: "黑龙江以北，外兴安岭以南。", strategy: "苦寒之地。肃慎、女真先世渔猎场所，后为沙俄侵蚀，近代领土痛点。" },
+                720: { scope: "松嫩平原。", strategy: "白山黑水。土地肥沃，夫余、渤海国曾在此繁衍，金朝肇兴之地。" },
+                730: { scope: "辽西走廊及大凌河流域。", strategy: "咽喉孔道。连接东北与华北的唯一平原通道，明清战争决胜地（宁远、山海关）。" },
+                740: { scope: "辽东半岛及辽河平原。", strategy: "东北腹心。开发较早，汉文化影响深，公孙氏、前燕曾以此为基业。" },
+                810: { scope: "朝鲜半岛西北部，平壤周边。", strategy: "半岛重心。古朝鲜、卫满朝鲜、高句丽（后期）都城所在，中原王朝经略半岛的桥头堡（乐浪郡）。" },
+                820: { scope: "朝鲜半岛东北部，咸镜道。", strategy: "女真杂处。山地崎岖，是高句丽的后方，也是女真势力与半岛政权的缓冲区。" },
+                830: { scope: "朝鲜半岛中西部，汉江流域。", strategy: "汉城要冲。连接南北，百济故地，半岛统一政权（王氏高丽、李氏朝鲜）的理想都城。" },
+                840: { scope: "朝鲜半岛西南部，全罗道。", strategy: "粮仓之地。百济核心，农业发达，海路通往中国江浙。" },
+                850: { scope: "朝鲜半岛东南部，庆尚道。", strategy: "新罗故地。依山阻海，易守难攻，新罗以此统一半岛，与日本交流密切。" },
+                910: { scope: "九州岛。", strategy: "西来门户。日本距离大陆最近处，遣唐使出发地，也是元军入侵和近代倒幕强藩（萨摩）所在。" },
+                920: { scope: "本州西部，中国地方。", strategy: "毛利领国。连接九州与近畿的通道，濑户内海航运关键，战国谋神毛利元就发家地。" },
+                930: { scope: "本州中东部，涵盖关东平原及中部山区（甲信越）。", strategy: "武家之源，王气所钟。 拥有日本最大的平原，是镰仓幕府与江户幕府的根据地，地势开阔，后来居上成为日本的政治经济中心。" },
+                940: { scope: "东北地方（奥羽）。", strategy: "边远陆奥。阿伊努人杂处，源赖朝扫清奥州藤原氏之地，民风彪悍。" },
+                950: { scope: "北海道（虾夷）。", strategy: "北疆开拓。明治维新前为化外之地，阿伊努人居所，防备北极熊的前沿。" },
+                960: { scope: "琉球群岛。", strategy: "万国津梁。连接中国、日本、东南亚的海上中转站，独立王国（中山），后被萨摩入侵。" }
+            }
+        };
+
+        const State = {
+            layers: {},
+            dataMap: {},
+            isEditMode: false,
+            isDelMode: false,
+            isSnapEnabled: false,
+            isVintageMode: true,
+            isProvEnabled: false,
+            selectedLayer: null,
+            currentRegion: null,
+            timelineMinYear: -200,
+            timelineMaxYear: 2024,
+            currentYear: 2024,
+            pendingSwitchRegion: null,
+            lockedRegimeId: null
+        };
+
+        const App = {
+            safeExec(fn) {
+                try {
+                    if (typeof fn === 'function') {
+                        fn.call(App);
+                    } else {
+                        console.error("safeExec called with non-function");
+                    }
+                } catch (e) {
+                    Logger.error(`操作失败: ${e.message}`);
+                }
+            },
+
+            init() {
+                console.log("正在初始化地图...");
+                MapCtrl.init(); // 初始化 Leaflet
+                // 【新增】必须在这里显式调用渲染，否则地图上只有底图，没有色块
+                MapCtrl.render();
+
+                // 完整版消息监听 (修复了纹理、复位、渲染等问题)
+                window.addEventListener('message', (event) => {
+                    // 【关键修复】安全阀：防止解构报错
+                    // 如果收到的消息不是对象（可能是插件发的），直接忽略，防止报错中断
+                    if (!event.data || typeof event.data !== 'object') return;
+
+                    const { type, payload = {} } = event.data;
+
+                    // Debug
+                    if (type === 'CMD_RESET') console.log("📍 地图页收到复位指令!");
+                    if (type !== 'CMD_ZOOM_IN' && type !== 'CMD_ZOOM_OUT') {
+                        console.log("Map received:", type, payload);
+                    }
+
+                    // 1. 初始化数据与样式
+                    if (type === 'INIT_DATA') {
+                        const { data, sharedCSS, config } = payload;
+
+                        // [关键修复] 注入父级发来的 CSS (解决 texture-V/J 无效问题)
+                        // 如果没有这一步，地图上的虚线和网格纹理将无法显示
+                        if (sharedCSS) {
+                            let styleEl = document.getElementById('shared-styles');
+                            if (!styleEl) {
+                                styleEl = document.createElement('style');
+                                styleEl.id = 'shared-styles';
+                                document.head.appendChild(styleEl);
+                            }
+                            styleEl.innerHTML = sharedCSS;
+                        }
+
+                        // 保存 API Key
+                        if (config && config.apiKey) {
+                            State.apiKey = config.apiKey;
+                        }
+
+                        // 处理政权数据
+                        if (data) {
+                            // 使用 App 内部的数据处理逻辑 (如果有)
+                            if (this.processData) this.processData(data);
+                            // 或者直接调用 Data 模块 (视你的代码结构而定，加两重保险)
+                            else if (window.Data) window.Data.process(data);
+
+                            // [关键修复] 数据加载完后，立即强制渲染地图色块
+                            // 解决“地图有数据但看不到色块”的问题
+                            if (window.MapCtrl && MapCtrl.render) {
+                                MapCtrl.render();
+                            }
+
+                            // 渲染时间轴/瀑布图
+                            if (typeof TimelineCtrl !== 'undefined' && TimelineCtrl.render) {
+                                TimelineCtrl.render(Data.regimes);
+                            }
+                        }
+                    }
+
+                    // 2. 更新配置
+                    if (type === 'CMD_CONFIG_UPDATE') {
+                        if (payload.apiKey) State.apiKey = payload.apiKey;
+                    }
+
+                    // 3. 缩放控制
+                    if (type === 'CMD_ZOOM_IN' && MapCtrl.map) MapCtrl.map.zoomIn();
+                    if (type === 'CMD_ZOOM_OUT' && MapCtrl.map) MapCtrl.map.zoomOut();
+
+                    if (type === 'CMD_RESET' || type === 'CMD_ZOOM_RESET') {
+                        App.safeExec(App.resetAll);
+                    }
+
+                    // 5. 跳转指令 (核心交互)
+                    if (type === 'CMD_JUMP') {
+                        // 调用原有的处理逻辑
+                        if (this.handleJump) this.handleJump(payload);
+
+                        // [补充] 显式更新时间轴和高亮 (防止 handleJump 覆盖不全)
+                        if (payload.year && MapCtrl.updateTimeline) MapCtrl.updateTimeline(payload.year);
+                        if (payload.regime && UICtrl.highlightRegime) UICtrl.highlightRegime(payload.regime);
+
+                        // 处理搜索跳转带来的详情展示
+                        if (payload.showDetails && payload.region) {
+                            setTimeout(() => {
+                                const layer = MapCtrl.findLayerByGeoCode(payload.region);
+                                if (layer) {
+                                    MapCtrl.map.flyTo(layer.getBounds().getCenter(), 6);
+                                    // 模拟点击触发详情，注意参数传递
+                                    if (MapCtrl.handleRegionClick) {
+                                        // 构造一个模拟的 item 对象
+                                        MapCtrl.handleRegionClick({ code: payload.region, name: '搜索结果' }, layer);
+                                    }
+                                }
+                            }, 500);
+                        }
+                    }
+
+                    // 6. 仿古模式开关监听
+                    if (type === 'CMD_TOGGLE_ANTIQUE') {
+                        this.toggleVintage();
+                    }
+
+                    // 7. 省界开关监听
+                    if (type === 'CMD_TOGGLE_BORDERS') {
+                        this.toggleProvincial();
+                    }
+
+                    // 8. 导出 GeoJSON 请求 (返回字符串格式)
+                    if (type === 'CMD_REQ_GEOJSON') {
+                        const geojson = MapCtrl.getCompactGeoJSON();
+                        window.parent.postMessage({ type: 'CMD_GEOJSON_DATA', payload: geojson }, '*');
+                    }
+
+                    // 9. 导入 GeoJSON
+                    if (type === 'CMD_SET_GEOJSON') {
+                        MapCtrl.loadGeoJSON(payload);
+                    }
+                });
+
+                // 通知父级：地图加载完毕
+                if (window.parent !== window) {
+                    window.parent.postMessage({ type: 'CHILD_READY', payload: { source: 'map' } }, '*');
+                }
+
+                // 初始化时间轴控制器
+                if (typeof TimelineCtrl !== 'undefined' && TimelineCtrl.init) {
+                    TimelineCtrl.init();
+                }
+            },
+
+            // --- [修复] 地图页专用复位函数 ---
+            resetAll: function () {
+                console.log("📍 执行地图复位...");
+
+                // 1. 重置逻辑状态
+                MapCtrl.deselectAll();
+                State.currentRegion = null;
+                State.selectedLayer = null;
+                State.pendingSwitchRegion = null;
+                State.lockedRegimeId = null;
+                State.currentRegimeData = null;
+                State.isEditMode = false;
+                State.isDelMode = false;
+
+                // 2. 清除地图选中状态
+                if (MapCtrl && MapCtrl.deselectAll) {
+                    MapCtrl.deselectAll();
+                }
+
+                // 3. 视角回归宏观
+                if (MapCtrl && MapCtrl.zoomToMacro) {
+                    MapCtrl.zoomToMacro();
+                }
+
+                // 4. 关闭所有地图特有的弹窗
+                // (地图页用的是 regime-modal 和 switch-modal，没有 selection-modal)
+                const modals = ['regime-modal', 'switch-modal', 'ai-result-box'];
+                modals.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.classList.remove('show');
+                    if (el && id === 'ai-result-box') el.style.display = 'none';
+                });
+
+                // 5. 关闭右侧详情面板
+                if (UICtrl && UICtrl.closeAIPanel) {
+                    UICtrl.closeAIPanel();
+                }
+
+                // 6. 时间轴归位
+                State.currentYear = 2024;
+                const yearBtn = document.getElementById('cursor-year-btn');
+                if (yearBtn) yearBtn.innerText = "2024";
+                if (TimelineCtrl && TimelineCtrl.scrollTo) TimelineCtrl.scrollTo(2024);
+
+                UICtrl.showToast("♻️ 地图已重置");
+            },
+
+
+
+            toggleVintage: function () {
+                const wrapper = document.getElementById('map-wrapper');
+                if (wrapper) {
+                    wrapper.classList.toggle('vintage-mode');
+                    // 判断当前是否包含该类名来提示状态
+                    const isVintage = wrapper.classList.contains('vintage-mode');
+                    UICtrl.showToast(isVintage ? "仿古模式：开启" : "仿古模式：关闭");
+                }
+            },
+
+            // [新增] 切换省界
+            async toggleProvincial() {
+                // [修复] 移除了对 btn DOM 的操作，防止 null 报错
+                if (MapCtrl.provLayer) {
+                    State.isProvEnabled = !State.isProvEnabled;
+                    if (State.isProvEnabled) {
+                        MapCtrl.map.addLayer(MapCtrl.provLayer);
+                    } else {
+                        MapCtrl.map.removeLayer(MapCtrl.provLayer);
+                    }
+                    Logger.ui("切换省界: " + (State.isProvEnabled ? "开" : "关"));
+                    return;
+                }
+
+                if (this._isLoadingProv) {
+                    UICtrl.showToast("⏳ 正在下载数据，请耐心的等一等...");
+                    return;
+                }
+
+                this._isLoadingProv = true;
+                UICtrl.showToast("🔄 正在加载省界数据...");
+
+                const sources = [
+                    './china.json',
+                    'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json'
+                ];
+
+                let loadedData = null;
+                for (const url of sources) {
+                    try {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 30000);
+                        const response = await fetch(url, { signal: controller.signal, method: 'GET', mode: 'cors' });
+                        clearTimeout(timeoutId);
+                        if (response.ok) { loadedData = await response.json(); break; }
+                    } catch (err) { console.warn(`源连接跳过 [${url}]`); }
+                }
+
+                if (loadedData) {
+                    try {
+                        MapCtrl.provLayer = L.geoJSON(loadedData, {
+                            style: { color: "#444", weight: 1.5, opacity: 0.6, dashArray: '4, 6', fill: false },
+                            interactive: false, pane: 'provincePane'
+                        });
+                        State.isProvEnabled = true;
+                        MapCtrl.map.addLayer(MapCtrl.provLayer);
+                        UICtrl.showToast("✅ 省界加载成功");
+                    } catch (e) { Logger.error("解析错误"); UICtrl.showToast("❌ 数据格式错误"); }
+                } else { UICtrl.showToast("❌ 加载失败"); }
+
+                this._isLoadingProv = false;
+            },
+
+            toggleEditMode() {
+                State.isEditMode = !State.isEditMode;
+                if (State.isEditMode) {
+                    if (State.selectedLayer) {
+                        State.selectedLayer.pm.enable({ allowSelfIntersection: false, snappable: State.isSnapEnabled, snapDistance: 30 });
+                        UICtrl.showToast("编辑模式已开启");
+                    } else {
+                        UICtrl.showToast("请先选中一个色块");
+                        State.isEditMode = false;
+                        return;
+                    }
+                } else {
+                    if (State.selectedLayer && State.selectedLayer.pm) State.selectedLayer.pm.disable();
+                    State.isDelMode = false;
+                    UICtrl.showToast("编辑模式已关闭");
+                }
+                UICtrl.updateContextToolbar();
+            },
+
+            toggleSnapping() {
+                State.isSnapEnabled = !State.isSnapEnabled;
+                if (State.selectedLayer && State.selectedLayer.pm.enabled()) {
+                    State.selectedLayer.pm.setOptions({ snappable: State.isSnapEnabled });
+                    State.selectedLayer.pm.disable(); // Refresh
+                    State.selectedLayer.pm.enable({ allowSelfIntersection: false, snappable: State.isSnapEnabled, snapDistance: 30 });
+                }
+                UICtrl.updateContextToolbar();
+                UICtrl.showToast("吸附: " + (State.isSnapEnabled ? "开" : "关"));
+            },
+
+            toggleDeleteMode() {
+                State.isDelMode = !State.isDelMode;
+                UICtrl.updateContextToolbar();
+                UICtrl.showToast(State.isDelMode ? "点击节点即可删除" : "删除模式已关闭");
+            },
+
+            confirmSwitchRegion() {
+                if (!State.pendingSwitchRegion) return;
+                const target = State.pendingSwitchRegion;
+                document.getElementById('switch-modal').classList.remove('show');
+                if (State.selectedLayer) {
+                    const oldCode = State.currentRegion.code;
+                    State.layers[oldCode].setStyle({ weight: 1, color: MapCtrl.getColor(oldCode), opacity: 0.9, fillOpacity: 0.4 });
+                    if (State.layers[oldCode]._path) {
+                        State.layers[oldCode]._path.classList.remove('glow-effect');
+                        State.layers[oldCode]._path.classList.remove('conflict-effect');
+                    }
+                }
+                State.currentRegion = target;
+                State.selectedLayer = State.layers[target.code];
+                UICtrl.openDetailPanel(State.currentYear);
+                MapCtrl.updateHighlight(State.currentYear);
+                UICtrl.showToast(`已跳转至 ${target.name}`);
+            },
+
+
+
+            processData(rows) {
+                State.dataMap = {};
+                Data.regimes = [];
+                const TIME_CONFIG = window.parent?.GLOBAL_CONFIG?.TIME || { PRESENT_YEAR: 2025, DEFAULT_START: -200 };
+
+                rows.forEach(r => {
+                    const c = parseInt(r.geo_code);
+                    if (!c) return;
+                    if (!State.dataMap[c]) State.dataMap[c] = { regimes: [] };
+
+                    let start = parseInt(r.start_year);
+                    let end = r.end_year === 'present' ? TIME_CONFIG.PRESENT_YEAR : parseInt(r.end_year);
+                    if (isNaN(start) && isNaN(end)) return;
+                    if (isNaN(start)) start = TIME_CONFIG.DEFAULT_START;
+                    if (isNaN(end)) end = TIME_CONFIG.PRESENT_YEAR;
+
+                    const regimeItem = {
+                        name: r.regime_name || r.name,
+                        start, startStr: r.start_year, endStr: r.end_year,
+                        _start: start, _end: (end <= start) ? start + 1 : end,
+                        regimeCode: r.regime_code || "C11",
+                        suzerain: r.suzerain,
+                        suzerainType: r.suzerain_type,
+                        tier: parseInt(r.regime_tier) || 3,
+                        desc: r.desc,
+                        geo_code: c, // [新增] 补充地理编码供筛选使用
+                        _id: (r.regime_name || r.name) + r.start_year
+                    };
+
+                    State.dataMap[c].regimes.push(regimeItem);
+                    Data.regimes.push(regimeItem); // [新增] 同时存入全局列表
+                });
+
+                // 按年份排序防止时间轴错乱 (全局数组)
+                Data.regimes.sort((a, b) => a._start - b._start);
+
+                // [新增] 强制对每个区域的政权列表也进行排序，确保 actives[0] 逻辑的稳定性
+                // [优化] Tier 优先级高于 Start Year，确保王朝(Tier 1)优先于割据(Tier 3)
+                // 解决: 唐(Tier 1, 618) -> 后梁(Tier 1, 907) 应该优先于 定难军(Tier 3, 881)
+                Object.values(State.dataMap).forEach(regionData => {
+                    if (regionData.regimes) {
+                        regionData.regimes.sort((a, b) => {
+                            const tierA = a.tier || (a.type === 'Dynasty' ? 1 : 3);
+                            const tierB = b.tier || (b.type === 'Dynasty' ? 1 : 3);
+                            if (tierA !== tierB) return tierA - tierB; // 等级高的（数值小的）排前面
+                            return a._start - b._start; // 等级相同按时间
+                        });
+                    }
+                });
+            },
+
+            getRegimeStyle(code, name, suzerain, suzerainType) {
+                if (typeof code === 'object') {
+                    const r = code;
+                    return this.getRegimeStyle(r.regimeCode, r.name, r.suzerain, r.suzerainType);
+                }
+                if (window.parent && window.parent.GlobalUtils) {
+                    return window.parent.GlobalUtils.getStyle(code, name, suzerain, suzerainType);
+                }
+                return { bg: '#888', border: '#666', className: 'texture-C', isDashed: false };
+            },
+
+            getStyle: function (regimeCode, name, suzerainCode, suzerainType) {
+                if (window.parent && window.parent.GlobalUtils) {
+                    return window.parent.GlobalUtils.getStyle(regimeCode, name, suzerainCode, suzerainType);
+                }
+                return { bg: '#999', className: 'texture-N', border: '#666', isDashed: false };
+            },
+
+            // 【新增】跳转处理逻辑
+            handleJump(p) {
+                Logger.ui("收到跳转指令:", p);
+
+                // [新增] 清理可能残留的状态
+                if (MapCtrl && MapCtrl.deselectAll) MapCtrl.deselectAll();
+
+                document.querySelectorAll('.modal').forEach(el => el.classList.remove('show'));
+
+                // 1. 优先处理地理板块切换 (这是前提)
+                if (p.region) {
+                    const targetCode = parseInt(p.region);
+                    const regionData = Data.regions.find(r => r.code === targetCode);
+
+                    // 如果当前不在该板块，或者面板没打开，强制打开
+                    if (regionData) {
+                        // 模拟点击板块逻辑
+                        State.currentRegion = regionData;
+                        State.selectedLayer = State.layers[targetCode]; // 选中对应图层
+                        // 强制打开面板，传入指定的年份（如果有），否则用当前年份
+                        const jumpYear = p.year ? parseInt(p.year) : State.currentYear;
+                        State.currentYear = jumpYear;
+
+                        // 更新时间轴游标
+                        if (document.getElementById('cursor-year-btn')) document.getElementById('cursor-year-btn').innerText = jumpYear;
+                        TimelineCtrl.scrollTo(jumpYear);
+
+                        // 打开面板
+                        UICtrl.openDetailPanel(jumpYear);
+                        MapCtrl.updateHighlight(jumpYear);
+                    }
+                }
+
+                // 2. 处理政权高亮 (需要延时等待面板渲染完成)
+                if (p.regime && State.currentRegion) {
+                    setTimeout(() => {
+                        const rData = State.dataMap[State.currentRegion.code];
+                        if (rData && rData.regimes) {
+                            // 模糊匹配政权名称
+                            const target = rData.regimes.find(r => r.name === p.regime || r.name.includes(p.regime) || p.regime.includes(r.name));
+                            if (target) {
+                                // [智能修正] 如果目标政权在当前 Jump 年份并不存在（例如 1132年河洛是伪齐不是金），
+                                // 则自动调整时间到该政权在该区域的起始年份，确保能看到并高亮它。
+                                const currentY = State.currentYear;
+                                if (currentY < target._start || currentY > target._end) {
+                                    const bestYear = Math.min(2024, target._start + 2); // +2 稍微往后点确保稳定
+                                    State.currentYear = bestYear;
+
+                                    // 同步 UI
+                                    TimelineCtrl.scrollTo(bestYear);
+                                    const cursorBtn = document.getElementById('cursor-year-btn');
+                                    if (cursorBtn) cursorBtn.innerText = bestYear;
+
+                                    // 重新加载面板数据
+                                    UICtrl.openDetailPanel(bestYear);
+                                }
+
+                                TimelineCtrl.handleSliceClick(target); // 触发锁定逻辑
+                                UICtrl.showToast(`已定位至: ${target.name}`);
+                                MapCtrl.updateHighlight(State.currentYear); // 再次强制刷新高亮
+                            } else {
+                                console.warn("未找到政权:", p.regime);
+                            }
+                        }
+                    }, 600); // 延时稍微加长一点，确保DOM就绪
+                }
+            },
+
+            jumpToPanorama() {
+                const rName = document.getElementById('rm-name').innerText;
+                window.parent.postMessage({
+                    type: 'REQUEST_SWITCH',
+                    payload: { target: 'panorama', params: { regime: rName, year: State.currentYear } }
+                }, '*');
+            }
+        };
+
+        const MapCtrl = {
+            map: null,
+            provLayer: null,
+
+            init() {
+                Logger.sys("正在初始化地图...");
+                if (typeof L === 'undefined') throw new Error("Leaflet 未加载");
+
+                this.map = L.map('map', {
+                    center: [36.0, 108.0], zoom: 4, minZoom: 2, maxZoom: 10, zoomSnap: 0.1, zoomDelta: 0.5,
+                    preferCanvas: false, doubleClickZoom: false, zoomControl: false
+                });
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri', opacity: 1.0 }).addTo(this.map);
+
+                this.map.createPane('provincePane');
+                this.map.getPane('provincePane').style.zIndex = 450;
+                this.map.getPane('provincePane').style.pointerEvents = 'none';
+
+                // Preload province data
+                const controller = new AbortController();
+                setTimeout(() => controller.abort(), 30000);
+                fetch('./china.json', { signal: controller.signal })
+                    .then(r => r.ok ? r.json() : fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json', { mode: 'cors' }).then(r2 => r2.ok ? r2.json() : null))
+                    .then(data => {
+                        if (data) {
+                            this.provLayer = L.geoJSON(data, {
+                                style: { color: "#444", weight: 1.5, opacity: 0.6, dashArray: '4, 6', fill: false },
+                                interactive: false, pane: 'provincePane'
+                            });
+                            Logger.info("省界预加载完成");
+                        }
+                    })
+                    .catch(e => console.warn("预加载跳过:", e));
+
+                if (this.map.pm) {
+                    this.map.pm.setGlobalOptions({ snappable: false, snapDistance: 30, allowSelfIntersection: false });
+                }
+
+                this.map.on('zoomend', () => {
+                    const zoom = this.map.getZoom();
+                    const val = Math.pow(Math.max(0, zoom - 1), 1.3) + 6;
+                    const newSize = Math.max(0, val) + 'px';
+                    document.documentElement.style.setProperty('--label-size', newSize);
+                });
+
+                // [新增] 初始化完成后立即适应最佳视图 (统一默认和复位状态)
+                this.zoomToMacro(false);
+            },
+
+            render() {
+                Logger.info("渲染地块...");
+                for (let code in State.layers) {
+                    if (State.layers[code].pm && State.layers[code].pm.enabled()) State.layers[code].pm.disable();
+                    this.map.removeLayer(State.layers[code]);
+                }
+                State.layers = {};
+                document.querySelectorAll('.region-label').forEach(e => e.remove());
+                Data.regions.forEach(item => {
+                    const coords = Data.coords[item.code];
+                    if (!coords) return;
+
+                    // [修复] 使用 className 选项替代 _path 操作
+                    const poly = L.polygon(coords, {
+                        color: this.getColor(item.code), weight: 1, opacity: 0.9,
+                        fillColor: this.getColor(item.code), fillOpacity: 0.4,
+                        pmIgnore: false,
+                        className: 'region-' + item.code // 直接在此处添加类名
+                    }).addTo(this.map);
+
+                    poly.on('pm:markerclick', (e) => {
+                        if (State.isDelMode) e.marker.fire('contextmenu');
+                    });
+                    if ([710, 520, 610, 620].includes(item.code)) poly.bringToBack();
+                    poly.itemData = item;
+                    State.layers[item.code] = poly;
+                    poly.on('click', (e) => {
+                        if (poly.pm.enabled()) return;
+                        L.DomEvent.stopPropagation(e);
+                        this.handleRegionClick(item, poly, e);
+                    });
+                    L.marker(poly.getCenter(), {
+                        icon: L.divIcon({ className: 'region-label', html: item.name, iconSize: [60, 20], iconAnchor: [30, 10] }),
+                        interactive: false
+                    }).addTo(this.map);
+                });
+            },
+
+            handleRegionClick(item, poly, event) {
+                Logger.ui(`Map Select: ${item.name}`);
+                if (State.isEditMode) {
+                    if (State.selectedLayer && State.selectedLayer !== poly) State.selectedLayer.pm.disable();
+                    State.selectedLayer = poly;
+                    State.currentRegion = item;
+                    poly.pm.enable({ allowSelfIntersection: false, snappable: State.isSnapEnabled, snapDistance: 30 });
+                    UICtrl.updateContextToolbar();
+                    UICtrl.showToast(`编辑中: ${item.name} (吸附: ${State.isSnapEnabled ? '开' : '关'})`);
+                    return;
+                }
+
+                if (document.getElementById('ai-panel').classList.contains('open') && (!State.currentRegion || item.code !== State.currentRegion.code)) {
+                    State.pendingSwitchRegion = item;
+                    const modal = document.getElementById('switch-modal');
+                    document.getElementById('switch-target-name').innerText = `🔗 ${item.name}`;
+                    const clickY = event.originalEvent.clientY || 300;
+                    const modalWidth = 220;
+                    let posX = event.originalEvent.clientX || 300;
+                    const screenW = window.innerWidth;
+                    modal.className = '';
+                    if (posX < modalWidth / 2 + 20) {
+                        modal.style.left = '10px'; modal.style.right = 'auto'; modal.classList.add('align-left');
+                    } else if (posX > screenW - (modalWidth / 2 + 20)) {
+                        modal.style.left = 'auto'; modal.style.right = '10px'; modal.classList.add('align-right');
+                    } else {
+                        modal.style.left = (posX - modalWidth / 2) + 'px'; modal.style.right = 'auto';
+                    }
+                    if (clickY < 150) {
+                        modal.style.top = (clickY + 20) + 'px'; modal.classList.add('modal-down');
+                    } else {
+                        modal.style.top = (clickY - 80) + 'px'; modal.classList.add('modal-up');
+                    }
+                    modal.classList.add('show');
+                    return;
+                }
+
+                this.deselectAll();
+                State.selectedLayer = poly;
+                State.currentRegion = item;
+                poly.setStyle({ weight: 3, color: '#e74c3c', opacity: 1, fillOpacity: 0.6 });
+                poly.bringToFront();
+                UICtrl.updateContextToolbar();
+            },
+
+            deselectAll() {
+                if (State.selectedLayer && State.selectedLayer.pm && State.selectedLayer.pm.enabled()) State.selectedLayer.pm.disable();
+                State.selectedLayer = null;
+                Object.values(State.layers).forEach(layer => {
+                    const code = layer.itemData.code;
+                    // [修复] 必须显式重置 fillColor，否则高亮后的金色会残留
+                    layer.setStyle({
+                        weight: 1,
+                        color: this.getColor(code),
+                        opacity: 0.9,
+                        fillOpacity: 0.4,
+                        fillColor: this.getColor(code), // <--- Critical Fix
+                        dashArray: null
+                    });
+                    if (layer._path) {
+                        layer._path.classList.remove('glow-effect');
+                        layer._path.classList.remove('conflict-effect');
+                    }
+                    if ([710, 520, 610, 620].includes(code)) layer.bringToBack();
+                });
+                document.getElementById('switch-modal').classList.remove('show');
+                UICtrl.updateContextToolbar();
+            },
+
+            updateHighlight(year) {
+                if (!State.currentRegion || !State.dataMap[State.currentRegion.code]) return;
+                const region = State.dataMap[State.currentRegion.code];
+                // 确保 actives 按 start year 排序，方便后续计算
+                const actives = region.regimes.filter(r => year >= r._start && year <= r._end)
+                    .sort((a, b) => a._start - b._start);
+
+                let target = null;
+
+                // --- 辅助函数：寻找最佳继承者 ---
+                const findSuccessor = (prevRegime, candidates) => {
+                    if (!candidates || candidates.length === 0) return null;
+                    if (!prevRegime) return candidates[0]; // 无前任，默认选最早的
+
+                    // 1. 优先找衔接最紧密的（start 最接近 prev.end）
+                    let best = null;
+                    let minGap = Infinity;
+
+                    candidates.forEach(c => {
+                        const gap = Math.abs(c._start - prevRegime._end);
+                        if (gap < minGap) {
+                            minGap = gap;
+                            best = c;
+                        } else if (gap === minGap) {
+                            // Gap 相同，Tier 决定
+                            const tierC = c.tier || (c.type === 'Dynasty' ? 1 : 3);
+                            const tierBest = best.tier || (best.type === 'Dynasty' ? 1 : 3);
+                            if (tierC < tierBest) best = c;
+                        }
+                    });
+                    return best;
+                };
+
+                if (State.lockedRegimeId) {
+                    const allRegimesFlat = Object.values(State.dataMap).flatMap(d => d.regimes);
+                    let currentLocked = allRegimesFlat.find(r => r._id === State.lockedRegimeId);
+
+                    // [Refixed] 强制解锁逻辑
+                    if (!currentLocked || year < currentLocked._start || year > currentLocked._end) {
+                        State.lockedRegimeId = null;
+                        target = findSuccessor(currentLocked, actives);
+                    } else {
+                        target = currentLocked;
+                    }
+                } else {
+                    // [动态模式]
+                    // 1. 惯性保持：如果上一次选中的 target 还在 actives 里，就保持它
+                    if (State.lastActiveRegime && actives.find(r => r._id === State.lastActiveRegime._id)) {
+                        target = State.lastActiveRegime;
+                    } else {
+                        // 2. 也是用寻找继承者逻辑
+                        target = findSuccessor(State.lastActiveRegime, actives);
+                    }
+                }
+
+                // 记录本帧 target 供下一帧使用
+                if (target) State.lastActiveRegime = target;
+                if (target) {
+                    Object.keys(State.layers).forEach(code => {
+                        const layer = State.layers[code];
+                        const otherRegion = State.dataMap[code];
+                        const activeRegimesInThisRegion = otherRegion && otherRegion.regimes.filter(r => year >= r._start && year <= r._end);
+                        let isTargetHere = false;
+                        let isCoRuling = false;
+                        if (activeRegimesInThisRegion && activeRegimesInThisRegion.length > 0) {
+                            isTargetHere = activeRegimesInThisRegion.some(r =>
+                                r.name === target.name || (target.name.length > 1 && r.name.includes(target.name)) || (r.name.length > 1 && target.name.includes(r.name))
+                            );
+                            isCoRuling = activeRegimesInThisRegion.length > 1;
+                        }
+                        if (code == State.currentRegion.code) {
+                            // [修复] 即使是当前选中区域，如果是目标政权领土，也应显示高亮色
+                            let style = { weight: 3, color: '#c0392b', opacity: 1, fillOpacity: 0.6, fillColor: this.getColor(code), dashArray: null };
+
+                            if (isTargetHere) {
+                                style.fillColor = '#f1c40f'; // 强制金色
+                                style.opacity = 1;
+
+                                if (isCoRuling) {
+                                    style.dashArray = '6, 6';
+                                    if (layer._path) layer._path.classList.add('conflict-effect');
+                                } else {
+                                    style.dashArray = null;
+                                    if (layer._path) layer._path.classList.remove('conflict-effect');
+                                }
+                            }
+                            layer.setStyle(style);
+                            layer.bringToFront();
+                            return;
+                        }
+                        if (isTargetHere) {
+                            if (!isCoRuling) {
+                                layer.setStyle({ weight: 2, color: '#f1c40f', opacity: 0.9, fillOpacity: 0.6, fillColor: '#f1c40f', dashArray: null });
+                                if (State.lockedRegimeId && layer._path) {
+                                    layer._path.classList.add('glow-effect');
+                                    layer._path.classList.remove('conflict-effect');
+                                }
+                            } else {
+                                layer.setStyle({ weight: 2, color: '#d35400', opacity: 0.9, fillOpacity: 0.6, fillColor: '#e67e22', dashArray: '6, 6' });
+                                if (State.lockedRegimeId && layer._path) {
+                                    layer._path.classList.remove('glow-effect');
+                                    layer._path.classList.add('conflict-effect');
+                                }
+                            }
+                            layer.bringToFront();
+                            return;
+                        }
+                        layer.setStyle({ weight: 1, color: this.getColor(code), opacity: 0.3, fillOpacity: 0.1, fillColor: this.getColor(code), dashArray: null });
+                        if (layer._path) {
+                            layer._path.classList.remove('glow-effect');
+                            layer._path.classList.remove('conflict-effect');
+                        }
+                    });
+                    if (State.selectedLayer) State.selectedLayer.bringToFront();
+                } else {
+                    Object.keys(State.layers).forEach(code => {
+                        if (State.layers[code]._path) {
+                            State.layers[code]._path.classList.remove('glow-effect');
+                            State.layers[code]._path.classList.remove('conflict-effect');
+                        }
+                        if (code == State.currentRegion.code) {
+                            State.layers[code].setStyle({ weight: 3, color: '#e74c3c', opacity: 1, fillOpacity: 0.6, dashArray: null });
+                            return;
+                        }
+                        State.layers[code].setStyle({ weight: 1, color: this.getColor(code), opacity: 0.9, fillOpacity: 0.4, fillColor: this.getColor(code), dashArray: null });
+                        if ([710, 520, 610, 620].includes(parseInt(code))) State.layers[code].bringToBack();
+                    });
+                }
+            },
+
+            // --- 替换 MapCtrl 对象中的 getColor ---
+            getColor(code) {
+                if (window.parent && window.parent.EastAsiaApp && window.parent.EastAsiaApp.calcColor) {
+                    return window.parent.EastAsiaApp.calcColor(code);
+                }
+                return '#666'; // Fallback
+            },
+
+            zoomToMacro(isAnimate = true) {
+                const panel = document.getElementById('ai-panel');
+                const isPanelOpen = panel && panel.classList.contains('open');
+                const isHalfMode = panel && panel.classList.contains('half-mode');
+                const isMobile = window.innerWidth <= 768;
+
+                let south = 15.0; let west = 70.0; let north = 55.0; let east = 146.0;
+
+                if (isHalfMode) {
+                    if (isMobile) { south = 5.0; north = 53.0; west = 70.0; east = 146.0; }
+                    else { south = 17.0; north = 53.0; west = 68.0; east = 148.0; }
+                } else if (isMobile && !isPanelOpen) {
+                    west = 72.0; east = 144.0; south = 15.0; north = 55.0;
+                }
+
+                const targetBounds = L.latLngBounds([south, west], [north, east]);
+                let padTop = 30; let padLeft = 0; let padRight = 0; let padBottom = 0;
+
+                if (isPanelOpen) {
+                    if (isHalfMode) {
+                        if (isMobile) { padBottom = (window.innerHeight * 0.5) + 20; padTop = 20; }
+                        else { padBottom = (window.innerHeight * 0.5) + 10; padTop = 40; }
+                    } else if (!isMobile) {
+                        padRight = 450; padLeft = 40;
+                    }
+                } else {
+                    if (isMobile) { padTop = 50; padBottom = 50; padLeft = 20; padRight = 20; }
+                }
+
+                this.map.fitBounds(targetBounds, {
+                    paddingTopLeft: [padLeft, padTop],
+                    paddingBottomRight: [padRight, padBottom],
+                    maxZoom: 10, animate: isAnimate, duration: 1.0
+                });
+            },
+
+            // 替换 map.html 中 MapCtrl 下的 getCompactGeoJSON
+            getCompactGeoJSON: function () {
+                let outputStr = "";
+
+                // 按 ID 排序，方便查找
+                const sortedKeys = Object.keys(State.layers).sort((a, b) => parseInt(a) - parseInt(b));
+
+                sortedKeys.forEach(code => {
+                    const layer = State.layers[code];
+                    if (!layer || !layer.getLatLngs) return;
+
+                    // 获取坐标 (处理 Leaflet 可能的多重数组嵌套)
+                    let latlngs = layer.getLatLngs();
+                    // 如果是多边形嵌套(比如有洞或MultiPolygon)，通常取最外层 ring
+                    if (Array.isArray(latlngs) && Array.isArray(latlngs[0]) && typeof latlngs[0][0] !== 'number') {
+                        latlngs = latlngs[0];
+                    }
+
+                    // 格式化坐标点：保留4位小数，格式为 [lat, lng]
+                    // 你的示例是 [36.6, 110.2] (纬度在前)，这符合 Leaflet L.polygon 的默认要求
+                    const pointsStr = latlngs.map(p => {
+                        const lat = parseFloat(p.lat.toFixed(4));
+                        const lng = parseFloat(p.lng.toFixed(4));
+                        return `[${lat},${lng}]`;
+                    }).join(",");
+
+                    // 拼接成 "ID": [坐标], 的格式
+                    // 为了缩进美观，前面加了几个空格，你可以根据需要调整
+                    outputStr += `    "${code}": [${pointsStr}],\n`;
+                });
+
+                // 直接返回字符串
+                return outputStr;
+            },
+
+            // [新增] 导入 GeoJSON 方法
+            loadGeoJSON: function (data) {
+                if (this.geoLayer) this.geoLayer.clearLayers();
+                this.geoLayer = L.geoJSON(data, {
+                    onEachFeature: (feature, layer) => {
+                        layer.on('click', () => {
+                            this.handleRegionClick(feature.properties.id);
+                        });
+                        this.layers[feature.properties.id] = layer;
+                    },
+                    style: (feature) => {
+                        return { fillColor: '#ddd', color: 'white', weight: 1, fillOpacity: 0.5 };
+                    }
+                }).addTo(this.map);
+                UICtrl.showToast("新坐标数据已加载");
+            },
+
+            // [新增] 加载省界数据方法
+            loadProvincialData: async function () {
+                try {
+                    // 使用阿里云公开数据演示
+                    const url = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json';
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error("Network error");
+                    const data = await response.json();
+
+                    this.provLayer = L.geoJSON(data, {
+                        style: { color: '#9CA3AF', weight: 1, opacity: 0.6, fill: false, dashArray: '4, 4' },
+                        interactive: false
+                    });
+                    return true;
+                } catch (error) {
+                    console.error("省界加载失败:", error);
+                    UICtrl.showToast("⚠️ 省界数据加载失败 (需联网)");
+                    return false;
+                }
+            }
+        };
+
+        const TimelineCtrl = {
+            isProgrammaticScroll: false,
+
+            init() {
+                Logger.info("初始化时间轴...");
+                const scroller = document.getElementById('waterfall-scroll');
+                const axisScroller = document.getElementById('timeline-axis-scroll');
+
+                scroller.addEventListener('scroll', () => {
+                    axisScroller.scrollTop = scroller.scrollTop;
+                    if (this.isProgrammaticScroll) return;
+                    const midPx = scroller.scrollTop + (scroller.clientHeight / 2);
+                    const newYear = Math.round(State.timelineMinYear + (midPx / CONFIG.pixelsPerYear));
+                    if (State.currentYear !== newYear) {
+                        State.currentYear = newYear;
+                        document.getElementById('cursor-year-btn').innerText = State.currentYear;
+                        if (!this._raf) {
+                            this._raf = requestAnimationFrame(() => {
+                                MapCtrl.updateHighlight(State.currentYear);
+                                this._raf = null;
+                            });
+                        }
+                    }
+                }, { passive: true });
+
+                const btn = document.getElementById('cursor-year-btn');
+                let startY = 0, startScroll = 0, dragging = false;
+
+                btn.addEventListener('mousedown', e => { dragging = true; startY = e.pageY; startScroll = scroller.scrollTop; e.preventDefault(); });
+                window.addEventListener('mousemove', e => { if (dragging) scroller.scrollTop = startScroll + (e.pageY - startY) * 2; });
+                window.addEventListener('mouseup', () => dragging = false);
+
+                btn.addEventListener('touchstart', e => { dragging = true; startY = e.touches[0].pageY; startScroll = scroller.scrollTop; e.preventDefault(); }, { passive: false });
+                window.addEventListener('touchmove', e => { if (dragging) scroller.scrollTop = startScroll + (e.touches[0].pageY - startY) * 2; }, { passive: false });
+                window.addEventListener('touchend', () => dragging = false);
+            },
+
+            render(regimes, preserveYear) {
+                if (!regimes || !Array.isArray(regimes)) return;
+                const contentBox = document.getElementById('waterfall-content');
+                const axisContent = document.getElementById('timeline-axis-content');
+                const gridBg = document.getElementById('timeline-grid-bg');
+
+                contentBox.innerHTML = ""; axisContent.innerHTML = ""; gridBg.innerHTML = "";
+
+                let starts = regimes.map(r => parseInt(r.startStr)).filter(n => !isNaN(n));
+                let ends = regimes.map(r => r.endStr === 'present' ? 2024 : parseInt(r.endStr)).filter(n => !isNaN(n));
+
+                if (starts.length === 0) { starts = [0]; ends = [2024]; }
+
+                const minStart = Math.min(...starts);
+                State.timelineMinYear = minStart - 50;
+                if (isNaN(State.timelineMinYear) || !isFinite(State.timelineMinYear)) State.timelineMinYear = -200;
+
+                State.timelineMaxYear = Math.max(...ends) + 50;
+                if (isNaN(State.timelineMaxYear) || !isFinite(State.timelineMaxYear)) State.timelineMaxYear = 2024;
+
+                const totalHeight = (State.timelineMaxYear - State.timelineMinYear) * CONFIG.pixelsPerYear;
+                contentBox.style.height = totalHeight + 'px';
+                axisContent.style.height = totalHeight + 'px';
+                gridBg.style.height = totalHeight + 'px';
+
+                if (totalHeight > 0 && totalHeight < 1000000) {
+                    for (let y = Math.floor(State.timelineMinYear / 100) * 100; y <= State.timelineMaxYear; y += 100) {
+                        const px = (y - State.timelineMinYear) * CONFIG.pixelsPerYear;
+                        const m = document.createElement('div'); m.className = 'timeline-year-mark'; m.innerText = y; m.style.top = px + 'px';
+                        axisContent.appendChild(m);
+                        const line = document.createElement('div'); line.className = 'timeline-grid-line'; line.style.top = px + 'px';
+                        gridBg.appendChild(line);
+                    }
+                }
+
+                const lanes = [];
+                regimes.forEach(r => {
+                    let assignedLane = -1;
+                    for (let i = 0; i < lanes.length; i++) {
+                        if (r._start >= lanes[i]) { assignedLane = i; lanes[i] = r._end; break; }
+                    }
+                    if (assignedLane === -1) { assignedLane = lanes.length; lanes.push(r._end); }
+                    r._globalLane = assignedLane;
+                });
+
+                let timePoints = new Set();
+                regimes.forEach(r => { timePoints.add(r._start); timePoints.add(r._end); });
+                const sortedPoints = Array.from(timePoints).sort((a, b) => a - b);
+
+                const createdSlices = [];
+
+                for (let i = 0; i < sortedPoints.length - 1; i++) {
+                    const t1 = sortedPoints[i];
+                    const t2 = sortedPoints[i + 1];
+                    const active = regimes.filter(r => r._start < t2 && r._end > t1);
+                    if (active.length === 0) continue;
+
+                    active.sort((a, b) => a._globalLane - b._globalLane);
+                    const count = active.length;
+                    const unitWidth = 100 / count;
+                    const zIndexBase = 50000 - (i * 100);
+
+                    // --- 请替换 render 函数中 active.forEach 内部的逻辑 ---
+                    active.forEach((r, idx) => {
+                        const left = idx * unitWidth;
+                        const width = unitWidth;
+                        const topPx = (t1 - State.timelineMinYear) * CONFIG.pixelsPerYear;
+                        const actualHeight = Math.max((t2 - t1) * CONFIG.pixelsPerYear, 0);
+                        const bottomPx = topPx + actualHeight;
+
+                        // (合并切片的逻辑保持不变...)
+                        const lastSliceObj = createdSlices.slice().reverse().find(s => s.regimeId === r._id);
+                        let merged = false;
+                        if (lastSliceObj) {
+                            if (Math.abs(lastSliceObj.bottom - topPx) < 1.5) {
+                                if (Math.abs(lastSliceObj.left - left) < 2.0 && Math.abs(lastSliceObj.width - width) < 2.0) {
+                                    const newHeight = parseFloat(lastSliceObj.el.style.height) + actualHeight;
+                                    lastSliceObj.el.style.height = newHeight + 'px';
+                                    lastSliceObj.bottom = bottomPx;
+                                    merged = true;
+                                }
+                            }
+                        }
+                        if (merged) return;
+
+                        const div = document.createElement('div');
+                        const tier = r.tier;
+
+                        // ============================================================
+                        // [关键修改] 调用父级(index.html)的 getStyle 以保持统一样式
+                        // ============================================================
+                        let style = { bg: '#666', border: 'rgba(0,0,0,0.1)', className: 'texture-N' };
+
+                        if (window.parent && window.parent.EastAsiaApp && window.parent.EastAsiaApp.getStyle) {
+                            // 传入参数：代码, 名称, 宗主代码, 宗主类型
+                            style = window.parent.EastAsiaApp.getStyle(
+                                r.regimeCode,
+                                r.name,
+                                r.suzerainCode || r.suzerain,
+                                r.suzerainType
+                            );
+                        }
+
+                        // 1. 应用 Class (如 texture-V, texture-J)
+                        div.className = `regime-slice ${style.className || ''} ` + (tier === 1 ? 'tier-1' : tier === 2 ? 'tier-2' : 'tier-3');
+
+                        // 2. 应用颜色和纹理变量
+                        div.style.backgroundColor = style.bg;
+                        div.style.color = style.textColor || '#fff';
+
+                        if (style.pattern) {
+                            div.style.setProperty('--pat-color', style.pattern);
+                        }
+
+                        // 3. 应用边框 (处理虚线框)
+                        if (style.isDashed) {
+                            div.style.borderStyle = 'dashed';
+                            div.style.borderColor = style.border;
+                            div.style.borderWidth = '2px';
+                            div.style.zIndex = zIndexBase + idx + 100; // 提升层级防止遮挡
+                        } else {
+                            div.style.border = '1px solid rgba(0,0,0,0.1)';
+                        }
+                        // ============================================================
+
+                        div.style.top = topPx + 'px';
+                        div.style.height = actualHeight + 'px';
+                        div.style.left = left + '%';
+                        div.style.width = `calc(${width}% - 1px)`;
+                        div.style.zIndex = zIndexBase + idx;
+
+                        if (actualHeight < 20) div.classList.add('tiny-slice');
+
+                        const lockIcon = (State.lockedRegimeId === r._id) ? '🔒 ' : '';
+                        const widthPx = (width / 100) * 400;
+
+                        // (字体大小计算逻辑保持不变...)
+                        let fontSize = 10;
+                        let fontClass = '';
+                        if (tier === 1) fontClass = 'font-tier-1';
+                        else if (tier === 2) fontClass = 'font-tier-2';
+                        else fontClass = 'font-tier-3';
+
+                        if (width < 95) {
+                            if (tier === 1) fontSize = Math.max(10, Math.min(30, widthPx / 3.5));
+                            else if (tier === 2) fontSize = Math.max(10, Math.min(20, widthPx / 4));
+                            else fontSize = Math.max(10, Math.min(15, widthPx / 5));
+                        } else {
+                            if (tier === 1) fontSize = Math.max(20, Math.min(40, widthPx / 3));
+                            else if (tier === 2) fontSize = Math.max(15, Math.min(30, widthPx / 4));
+                            else fontSize = Math.max(10, Math.min(20, widthPx / 5));
+                        }
+                        fontSize = Math.min(fontSize, actualHeight * 0.9);
+                        fontSize = Math.max(10, fontSize);
+
+                        div.innerHTML = `<div class="slice-label-sticky"><span class="slice-text ${fontClass}" style="font-size:${fontSize}px;">${lockIcon}${r.name}</span></div>`;
+
+                        // 点击事件保持不变
+                        div.onclick = (e) => { e.stopPropagation(); this.handleSliceClick(r); };
+                        if (State.lockedRegimeId === r._id) div.classList.add('active-locked');
+
+                        contentBox.appendChild(div);
+                        createdSlices.push({ regimeId: r._id, el: div, top: topPx, bottom: bottomPx, left: left, width: width });
+                    });
+                }
+
+                const targetYear = (typeof preserveYear === 'number' && !isNaN(preserveYear)) ? preserveYear : (minStart + 50);
+                setTimeout(() => this.scrollTo(targetYear), 50);
+            },
+
+            handleSliceClick(r) {
+                if (State.lockedRegimeId === r._id) {
+                    try {
+                        UICtrl.openRegimeModal(r);
+                    } catch (e) {
+                        console.warn("Modal open failed, resetting lock.");
+                        State.lockedRegimeId = null;
+                        this.render(State.dataMap[State.currentRegion.code].regimes, State.currentYear);
+                    }
+                } else {
+                    State.lockedRegimeId = r._id;
+                    let targetYear = State.currentYear;
+                    if (State.currentYear < r._start || State.currentYear > r._end) {
+                        targetYear = r._start + 5;
+                    }
+                    this.render(State.dataMap[State.currentRegion.code].regimes, targetYear);
+                    MapCtrl.updateHighlight(targetYear);
+                    UICtrl.showToast(`已锁定: ${r.name}`);
+                }
+            },
+
+            scrollTo(y) {
+                this.isProgrammaticScroll = true;
+                const px = (y - State.timelineMinYear) * CONFIG.pixelsPerYear;
+                const container = document.getElementById('waterfall-scroll');
+                container.scrollTop = px - (container.clientHeight / 2);
+                State.currentYear = y;
+                document.getElementById('cursor-year-btn').innerText = y;
+                setTimeout(() => { this.isProgrammaticScroll = false; }, 150);
+            }
+        };
+
+        const UICtrl = {
+            showToast(msg, duration = 2000) {
+                // 调用父级统一的 Toast 函数
+                if (window.parent && window.parent.GlobalUtils) {
+                    window.parent.GlobalUtils.showToast(msg, duration);
+                    return;
+                }
+
+                // 本地 fallback（如果父级不可用）
+                const c = document.getElementById('toast-container');
+                if (!c) return;
+                const t = document.createElement('div'); t.className = 'toast'; t.innerText = msg;
+                c.appendChild(t); setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, duration);
+            },
+
+            openModal(id) { document.getElementById(id).classList.add('show'); },
+
+            openDetailPanel(preserveYear = null) {
+                Logger.ui("Opening Detail Panel...");
+                if (!State.currentRegion) return;
+
+                const item = State.currentRegion;
+                document.getElementById('panel-title').innerText = item.name;
+                document.getElementById('panel-subtitle').innerText = item.group;
+
+                const analysis = Data.analysis[item.code] || { scope: "暂无", strategy: "暂无" };
+                document.getElementById('geo-scope').innerText = analysis.scope;
+                document.getElementById('geo-strategy').innerText = analysis.strategy;
+
+                const d = State.dataMap[item.code];
+                if (d && d.regimes.length) {
+                    d.regimes.sort((a, b) => a.start - b.start);
+                    const yearToScroll = (preserveYear !== null) ? preserveYear : null;
+                    TimelineCtrl.render(d.regimes, yearToScroll);
+                } else {
+                    document.getElementById('waterfall-content').innerHTML = "<div style='padding:20px;text-align:center;'>暂无数据</div>";
+                }
+
+                const p = document.getElementById('ai-panel');
+                if (p) {
+                    p.classList.add('open');
+                    MapCtrl.zoomToMacro();
+                }
+                State.pendingSwitchRegion = null;
+            },
+
+            closeAIPanel() {
+                const p = document.getElementById('ai-panel');
+                p.classList.remove('open'); p.classList.remove('half-mode');
+                MapCtrl.deselectAll();
+                State.lockedRegimeId = null;
+                MapCtrl.zoomToMacro();
+            },
+
+            togglePanelSize() {
+                const p = document.getElementById('ai-panel');
+                p.classList.toggle('half-mode');
+                MapCtrl.zoomToMacro();
+                setTimeout(() => TimelineCtrl.scrollTo(State.currentYear), 300);
+            },
+
+            updateContextToolbar() {
+                const bar = document.getElementById('context-toolbar');
+                bar.innerHTML = '';
+
+                if (State.isEditMode) {
+                    bar.classList.add('active');
+
+                    const snapBtn = document.createElement('button');
+                    snapBtn.className = `ctx-btn ${State.isSnapEnabled ? 'active' : ''}`;
+                    snapBtn.innerHTML = `🧲 吸附: ${State.isSnapEnabled ? '开' : '关'}`;
+                    snapBtn.onclick = () => App.safeExec(App.toggleSnapping);
+                    bar.appendChild(snapBtn);
+
+                    const delBtn = document.createElement('button');
+                    delBtn.className = `ctx-btn danger ${State.isDelMode ? 'active' : ''}`;
+                    delBtn.innerHTML = State.isDelMode ? '点击节点删除' : '🗑️ 删除节点';
+                    delBtn.onclick = () => App.safeExec(App.toggleDeleteMode);
+                    bar.appendChild(delBtn);
+
+                    const doneBtn = document.createElement('button');
+                    doneBtn.className = 'ctx-btn primary';
+                    doneBtn.innerHTML = '✅ 完成';
+                    doneBtn.onclick = () => App.safeExec(App.toggleEditMode);
+                    bar.appendChild(doneBtn);
+
+                } else if (State.selectedLayer) {
+                    bar.classList.add('active');
+
+                    const detailBtn = document.createElement('button');
+                    detailBtn.className = 'ctx-btn primary';
+                    detailBtn.innerHTML = '📜 查看详情';
+                    detailBtn.onclick = () => App.safeExec(() => UICtrl.openDetailPanel(null));
+                    bar.appendChild(detailBtn);
+
+                    const editBtn = document.createElement('button');
+                    editBtn.className = 'ctx-btn';
+                    editBtn.innerHTML = '✏️ 编辑形状';
+                    editBtn.onclick = () => App.safeExec(App.toggleEditMode);
+                    bar.appendChild(editBtn);
+                } else {
+                    bar.classList.remove('active');
+                }
+            },
+
+            askGemini: async function () {
+                const r = State.currentRegimeData;
+                if (!r) { alert("未选中政权"); return; }
+
+                // 1. 获取 API Key
+                let apiKey = null;
+                if (window.parent && window.parent.EastAsiaApp && window.parent.EastAsiaApp.state) {
+                    apiKey = window.parent.EastAsiaApp.state.apiKey;
+                }
+                if (!apiKey) {
+                    alert("🔴 请先在主页顶部输入并保存 Gemini API Key");
+                    return;
+                }
+
+                // 2. 准备 UI
+                const btn = document.querySelector('.btn-ai');
+                const resBox = document.getElementById('ai-result-box') || this.createResultBox();
+
+                // 3. 获取地理上下文
+                const geoCode = r.geo_code;
+                const regionConfig = window.Data.regions.find(reg => reg.code == geoCode);
+                const subRegion = regionConfig ? regionConfig.name : "该地区";
+
+                // 安全获取自定义范围数据
+                const analysisData = (window.Data.analysis && window.Data.analysis[geoCode]) ? window.Data.analysis[geoCode] : {};
+                const customScope = analysisData.scope || "常规地理定义";
+
+                // --- 【新增】获取系统记录的时间 ---
+                // 优先显示原始字符串(如 "221 BC")，如果没有则显示计算用的数字
+                const startTime = r.startStr || r._start;
+                const endTime = r.endStr || r._end;
+                const timeSystem = `${startTime} 至 ${endTime}`;
+
+                if (btn) {
+                    btn.innerHTML = `⏳ 正在核对【${subRegion}】的时间线...`;
+                    btn.disabled = true;
+                    btn.style.opacity = '0.7';
+                }
+
+                resBox.style.display = 'block';
+                resBox.innerHTML = `<div style="text-align:center; padding:10px;">⚡ AI 正在分析【${r.name}】在【${subRegion}】的统治史实与时间准确性...</div>`;
+                resBox.className = 'ai-result';
+
+                const existingDesc = r.desc || "无";
+
+                // --- 【关键修改】Prompt 增强：增加时间核查指令 ---
+                const prompt = `你是一位严谨的历史地理学家。请分析中国历史政权【${r.name || r.regime_name}】在特定地理亚区【${subRegion}】的统治详情。
+            
+            【重要：地理范围界定】
+            用户对“${subRegion}”的定义为：【${customScope}】。
+            请严格基于此范围分析，不要使用现代或狭义定义。
+
+            【待核查的数据】
+            1. 政权名称：${r.name || r.regime_name}
+            2. 目标区域：${subRegion}
+            3. 系统记录的统治时间：【${timeSystem}】 (注意：这可能是政权的整体存续时间，不一定等于统治该区域的时间)
+            4. 现有描述：${existingDesc}
+
+            【分析任务】
+            请输出一段简练的历史介绍（200字以内），内容必须包含以下两个部分：
+
+            第一部分：时间线核查（Time Verification）
+            请明确判断系统记录的时间【${timeSystem}】对于【${subRegion}】这一特定区域是否准确？
+            - 区别：政权建立时间 vs 实际控制该区域的时间。
+            - 区别：政权灭亡时间 vs 失去该区域控制的时间。
+            - 结论：如果时间准确，请确认；如果不准确（例如：政权虽在，但晚了10年才打下该地，或早了20年就丢失该地），请**加粗**指出符合史实的实际起止年份。
+
+            第二部分：统治概况
+            在该时间段内，该政权在${customScope}范围内设立了什么关键行政机构（如郡县、节度使、行省）？或发生了什么决定性的战役？
+
+            【输出要求】
+            - 严禁废话，直奔主题。
+            - 必须明确回应时间是否准确。
+            - 纯文本格式输出，关键年份和纠错内容请用 **加粗**。`;
+
+                try {
+                    // 建议使用 gemini-2.0-flash-exp 或 gemini-1.5-flash 以获得更稳定的结果
+                    // 如果你的环境支持 gemini-3-flash-preview 可保留，否则建议替换为 'gemini-2.0-flash-exp'
+                    const modelName = 'gemini-2.0-flash-exp';
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            safetySettings: [
+                                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
+                                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+                                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
+                                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" }
+                            ]
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.error) throw new Error(data.error.message);
+
+                    if (data.candidates && data.candidates.length > 0) {
+                        if (data.candidates[0].finishReason === 'SAFETY') {
+                            resBox.innerHTML = `<div style="color:#f87171; padding:5px;">⚠️ 内容因安全策略被拦截。</div>`;
+                        }
+                        else if (data.candidates[0].content && data.candidates[0].content.parts) {
+                            const text = data.candidates[0].content.parts[0].text;
+                            resBox.innerHTML = ''; // 清空加载提示
+
+                            // 简单的打字机效果
+                            let i = 0;
+                            // 处理 markdown 加粗转为 HTML 加粗，提升可读性
+                            const formattedText = text
+                                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                .replace(/\n/g, '<br>');
+
+                            // 直接显示处理后的 HTML，或者保留打字机效果（这里为了 HTML 渲染正确，建议直接显示或分段打字）
+                            // 为防止 HTML 标签被打字机切断，这里简化为直接显示，或仅对纯文本打字
+                            // 简单起见，这里直接显示 HTML 以支持加粗样式：
+                            resBox.innerHTML = formattedText;
+                            resBox.scrollTop = resBox.scrollHeight;
+                        }
+                    } else {
+                        throw new Error("No candidates returned");
+                    }
+
+                } catch (e) {
+                    console.error("Gemini Error:", e);
+                    resBox.innerHTML = `<div style="color:#f87171; padding:5px;">❌ 请求失败: ${e.message}</div>`;
+                } finally {
+                    if (btn) {
+                        btn.innerHTML = '✨ AI 历史简述 / 核查';
+                        btn.disabled = false;
+                        btn.style.opacity = '1';
+                    }
+                }
+            },
+
+            // --- 替换 UICtrl.openRegimeModal ---
+            openRegimeModal(r) {
+                State.currentRegimeData = r;
+
+                // 1. 基础信息映射
+                const typeChar = String(r.regimeCode || r.regime_code).charAt(0);
+                const originChar = String(r.regimeCode || r.regime_code).charAt(2);
+                const typeMap = { 'C': '中原帝国', 'Q': '征服王朝', 'R': '割据列国', 'N': '原生部族', 'F': '边疆国家', 'T': '过渡政权', 'V': '藩属国' };
+                const originMap = { '1': '黄河核心', '2': '长江核心', '3': '南方边疆', '4': '青藏高原', '5': '西域新疆', '6': '蒙古草原', '7': '东北地区', '8': '朝鲜半岛', '9': '日本列岛' };
+
+                document.getElementById('rm-name').innerText = r.name || r.regime_name;
+                document.getElementById('rm-type').innerText = typeMap[typeChar] || '未知';
+                document.getElementById('rm-origin').innerText = originMap[originChar] || '未知';
+                document.getElementById('rm-time').innerText = `${r.startStr || r.start_year} ~ ${r.endStr || r.end_year}`;
+                document.getElementById('rm-desc').innerHTML = r.desc || "暂无描述";
+
+                // 隐藏可能存在的硬编码按钮
+                const hardcodedBtn = document.getElementById('btn-ai-check');
+                if (hardcodedBtn) hardcodedBtn.style.display = 'none';
+
+                // 2. 宗主国解析逻辑
+                let suzText = "无";
+                const rawSuzCode = r.suzerain; // processData 已修复，直接读取
+                const suzType = r.suzerainType;
+
+                if (rawSuzCode && rawSuzCode !== 'null') {
+                    const getName = (code) => {
+                        if (!code) return '?';
+                        if (/[\u4e00-\u9fa5]/.test(code)) return code;
+                        if (window.Data && window.Data.regimes) {
+                            const found = window.Data.regimes.find(d => d.regimeCode === code || d.regime_code === code);
+                            if (found) return found.name || found.regime_name;
+                        }
+                        return code;
+                    };
+
+                    if (suzType === 'V|J') {
+                        const parts = rawSuzCode.split('|');
+                        const vName = getName(parts[0]);
+                        const jName = getName(parts[1] || parts[0]);
+                        suzText = `${jName} (羁縻) & ${vName} (藩属)`;
+                    } else {
+                        const name = getName(rawSuzCode);
+                        const tMap = { 'V': '藩属', 'J': '羁縻' };
+                        suzText = `${name} (${tMap[suzType] || suzType})`;
+                    }
+                }
+                const suzEl = document.getElementById('rm-suzerain');
+                if (suzEl) suzEl.innerText = suzText;
+
+                // 3. 【核心修改】在标题栏插入"查看历史全景"按钮
+                const header = document.querySelector('#regime-modal .rd-header');
+                // 清除旧按钮以免重复
+                const oldJumpBtn = document.getElementById('btn-jump-pano-header');
+                if (oldJumpBtn) oldJumpBtn.remove();
+
+                const jumpBtn = document.createElement('button');
+                jumpBtn.id = 'btn-jump-pano-header';
+                jumpBtn.className = 'header-jump-btn';
+                jumpBtn.innerHTML = '🌍 查看历史全景';
+                jumpBtn.onclick = () => {
+                    if (window.parent.EastAsiaApp) {
+                        window.parent.EastAsiaApp.switchView('panorama');
+                        setTimeout(() => {
+                            window.parent.EastAsiaApp.broadcast('CMD_JUMP', { regime: r.name || r.regime_name, year: r.startStr || r.start_year });
+                        }, 200);
+                    }
+                };
+
+                // 插入到关闭按钮之前
+                const closeBtn = header.querySelector('.btn');
+                if (closeBtn) {
+                    header.insertBefore(jumpBtn, closeBtn);
+                } else {
+                    header.appendChild(jumpBtn);
+                }
+
+                // 4. 重置 AI 容器（移除了底部的查看全景按钮）
+                const container = document.getElementById('ai-container');
+                if (container) {
+                    container.innerHTML = '';
+                    const aiBtn = document.createElement('button');
+                    aiBtn.className = 'btn-ai';
+                    aiBtn.style.width = '100%';
+                    aiBtn.innerHTML = '<span>✨ AI 历史简述 / 核查</span>';
+                    aiBtn.onclick = () => {
+                        if (window.UICtrl && window.UICtrl.askGemini) {
+                            window.UICtrl.askGemini();
+                        } else {
+                            alert("AI 模块未就绪");
+                        }
+                    };
+                    container.appendChild(aiBtn);
+                }
+
+                const aiResBox = document.getElementById('ai-result-box');
+                if (aiResBox) {
+                    aiResBox.style.display = 'none';
+                    aiResBox.innerText = '';
+                }
+
+                this.openModal('regime-modal');
+            }
+        };
+
+        window.App = App;
+        window.State = State;
+        window.Data = Data;
+        window.MapCtrl = MapCtrl;
+        window.TimelineCtrl = TimelineCtrl;
+        window.UICtrl = UICtrl;
+
+        window.addEventListener('load', () => App.init());
+    </script>
+</body>
+
+</html>
