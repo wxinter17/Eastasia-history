@@ -8,14 +8,28 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <style>
         /* --- 1. 全局布局 --- */
-        body,
         html {
             margin: 0;
             padding: 0;
+            width: 100%;
+            height: 100%;
+            height: 100dvh;
+            /* 适配移动端动态视口 */
+            overflow: hidden;
+            position: fixed;
+            /* [Fix] 强制锁定视口，防止 iOS 橡皮筋效果和整体位移 */
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
             height: 100%;
             overflow: hidden;
             background: #0f172a;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            position: fixed;
+            /* [Fix] 双重锁定 */
         }
 
         .view-container {
