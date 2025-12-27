@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v87.01)</title>
+    <title>东亚历史全景 (v87.02)</title>
     <!-- [Unified CSS] Native Style (Merged) -->
     <link
         href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700;900&family=Inter:wght@400;600&display=swap"
@@ -83,7 +83,8 @@
         #sticky-header-row {
             position: sticky;
             top: 0;
-            z-index: 200;
+            z-index: 4000;
+            /* [Fix] Raise above labels (which are 2000+3000) */
             display: flex;
             height: 2.5rem;
             border-bottom: 1px solid var(--slate-700);
@@ -93,7 +94,8 @@
         #header-corner {
             position: sticky;
             left: 0;
-            z-index: 210;
+            z-index: 4100;
+            /* [Fix] Topmost corner */
             width: 3.5rem;
             flex-shrink: 0;
             background-color: var(--slate-900);
@@ -116,7 +118,8 @@
         .sticky-ticks {
             position: sticky;
             left: 0;
-            z-index: 190;
+            z-index: 3900;
+            /* [Fix] High enough but below header */
             width: 3.5rem;
             flex-shrink: 0;
             background-color: var(--slate-900);
@@ -129,6 +132,36 @@
             position: relative;
             background-color: var(--slate-900);
             overflow: hidden;
+        }
+
+        /* --- Crosshair (荧光线) --- */
+        #crosshair-line {
+            display: none;
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: rgba(255, 50, 50, 1);
+            box-shadow: 0 0 20px rgba(255, 50, 50, 1), 0 0 40px rgba(255, 50, 50, 0.8), 0 0 6px rgba(255, 255, 255, 0.8);
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        #crosshair-label {
+            display: none;
+            position: absolute;
+            left: 0.5rem;
+            transform: translateY(-50%);
+            background: rgba(220, 50, 50, 0.95);
+            color: #fff;
+            font-size: 14px;
+            font-weight: bold;
+            padding: 3px 8px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 1001;
+            font-family: monospace;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
         }
 
         /* --- Block Styles --- */
@@ -177,6 +210,20 @@
             z-index: 50 !important;
             box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9), 0 10px 40px rgba(0, 0, 0, 0.9) !important;
             transform: scale(1.005);
+        }
+
+        /* --- Dots Focus Mode --- */
+        body.mode-focus .era-dot:not(.is-focused) {
+            opacity: 0.1 !important;
+            filter: grayscale(100%) !important;
+            pointer-events: none !important;
+        }
+
+        body.mode-focus .era-dot.is-focused {
+            opacity: 1 !important;
+            filter: none !important;
+            transform: scale(1.3);
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
         }
 
         .era-dimmed {
@@ -447,15 +494,21 @@
         .timeline-tick-label {
             position: absolute;
             width: 100%;
-            text-align: right;
-            padding-right: 0.5rem;
+            text-align: center;
+            /* [Fix] 居中对齐 */
+            padding: 0 0.25rem;
             border-bottom: 1px solid rgba(51, 65, 85, 0.2);
             display: flex;
             align-items: center;
-            justify-content: flex-end;
+            justify-content: center;
+            /* [Fix] 居中对齐 */
             line-height: 1;
-            font-size: 10px;
-            color: var(--slate-500);
+            font-size: 11px;
+            /* [Fix] 字号稍大 */
+            font-weight: bold;
+            /* [Fix] 加粗 */
+            color: var(--slate-400);
+            /* [Fix] 稍亮一点 */
             font-family: monospace;
             height: 0;
         }
@@ -469,6 +522,28 @@
             border-radius: 0.25rem;
             display: inline-block;
             line-height: 1.6;
+        }
+
+        /* Modal Animation (替代 Tailwind animate-in fade-in zoom-in) */
+        .modal-content {
+            animation: modalFadeIn 0.2s ease-out;
+        }
+
+        @keyframes modalFadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        /* Details Gap */
+        .details-gap {
+            margin-top: 1rem;
         }
 
         /* Detail Panel Elements */
@@ -621,19 +696,18 @@
         <div class="panel-header">
             <h2 class="panel-title">📜 政权详情</h2>
 
-            <div class="flex items-center gap-2" style="display:flex; gap:0.5rem; align-items:center;">
+            <div style="display:flex; gap:0.5rem; align-items:center;">
                 <button id="btn-jump-map-header" class="jump-btn">
                     <span>🗺️</span> 查看历史地图
                 </button>
                 <button id="btn-close-panel" class="panel-close-btn">✕</button>
             </div>
         </div>
-        <div class="flex-1 overflow-y-auto p-5 custom-scrollbar" id="editor-content"
-            style="padding:1.25rem; overflow-y:auto; flex:1;"></div>
+        <div class="custom-scrollbar" id="editor-content" style="padding:1.25rem; overflow-y:auto; flex:1;"></div>
     </div>
 
     <div id="selection-modal" class="modal-overlay">
-        <div class="modal-content animate-in fade-in zoom-in duration-200">
+        <div class="modal-content">
             <div class="modal-header">
                 <span class="modal-title">请选择政权</span>
                 <button id="btn-close-modal" class="modal-close">✕</button>
@@ -657,9 +731,14 @@
                 <div id="render-area">
                     <div id="crosshair-line"></div>
                     <svg id="connections-layer" width="100%" height="100%"></svg>
-                    <div id="blocks-layer" class="absolute inset-0 z-10"></div>
-                    <div id="labels-layer" class="absolute inset-0 z-[2000] pointer-events-none"></div>
-                    <div id="grid-layer" class="absolute inset-0 z-0 pointer-events-none"></div>
+                    <div id="blocks-layer" style="position:absolute; top:0; left:0; right:0; bottom:0; z-index:10;">
+                    </div>
+                    <div id="labels-layer"
+                        style="position:absolute; top:0; left:0; right:0; bottom:0; z-index:2000; pointer-events:none;">
+                    </div>
+                    <div id="grid-layer"
+                        style="position:absolute; top:0; left:0; right:0; bottom:0; z-index:0; pointer-events:none;">
+                    </div>
                 </div>
             </div>
         </div>
@@ -681,6 +760,14 @@
             state: { regions: [], regionIndexMap: {}, regimeGroups: [], zoom: 1.5, rawData: [], features: { connections: true }, focusedGroupId: null, lastClickedGeoCode: null, layoutCache: {}, intraColumnCache: {} },
 
             init: function () {
+                // [Fix] 禁用浏览器滚动恢复
+                if ('scrollRestoration' in history) {
+                    history.scrollRestoration = 'manual';
+                }
+
+                // [Fix] 记录初始化时间，用于拦截初始阶段的错误滚动指令
+                this._initTime = Date.now();
+
                 window.addEventListener('message', (e) => {
                     // 【关键修复】安全阀
                     if (!e.data || typeof e.data !== 'object') return;
@@ -744,8 +831,14 @@
                         this.handleJump(payload);
                     }
 
-                    // 8. 同步滚动指令
+                    // 8. 同步滚动指令 [Fix] 拦截初始化阶段的现代年份
                     if (type === 'CMD_SCROLL_TO_YEAR') {
+                        const timeSinceInit = Date.now() - this._initTime;
+                        // 如果在初始化后3秒内，且年份 > 0（现代），则忽略（强制保持在夏朝）
+                        if (timeSinceInit < 3000 && payload > 0) {
+                            console.log(`[Panorama] 拦截初始滚动指令：${payload}，保持在夏朝`);
+                            return;
+                        }
                         if (window.scrollToYear) window.scrollToYear(payload);
                     }
                 });
@@ -966,6 +1059,19 @@
 
                 this.logic.calculateGroupCenters(this.state.regimeGroups, this.state.regionIndexMap);
                 this.render.drawAll();
+
+                // [Fix] 初始加载时滚动到顶部（最早时间）
+                if (!this.state.hasInitialScrolled) {
+                    this.state.hasInitialScrolled = true;
+                    // 使用较长的 setTimeout 确保覆盖其他滚动命令
+                    setTimeout(() => {
+                        const mainContent = document.getElementById('main-content');
+                        if (mainContent) {
+                            mainContent.scrollTop = 0;
+                            mainContent.scrollLeft = 0;
+                        }
+                    }, 500);
+                }
             },
 
             getStyle: function (group, frag) {
@@ -1571,48 +1677,55 @@
                                 if (bestLayout.type === 'H') label.style.whiteSpace = 'nowrap';
                                 if (Core.state.focusedGroupId === group.groupId) label.classList.add('is-focused');
                                 labelsFrag.appendChild(label);
-                            } else if (tier > 1) {
-                                // 小圆点
-                                if (boxW > 5 && boxH > 5) {
-                                    let dotSize = Math.min(6, Math.min(boxW, boxH));
-                                    // 圆点碰撞箱也缩小
-                                    let hitSize = dotSize * 0.8;
-                                    let tryDot = (dX, dY) => collisionMgr.add(dX - hitSize / 2, dY - hitSize / 2, hitSize, hitSize, 99);
+                            } else if (!result.placed) {
+                                // [Fix] 小圆点 - 标签无法放置时**必须**显示，无论色块多小
+                                // 移除 boxW/boxH 限制，确保北洋军阀等窄小政权也有视觉标识
 
-                                    let dotPlaced = false;
-                                    let dotX, dotY;
+                                let dotSize = Math.min(8, Math.max(boxW, boxH) * 0.7);
+                                dotSize = Math.max(2, dotSize); // 最小 2px，确保可见
 
-                                    // 简单扫描
-                                    for (let vo of [0, -boxH * 0.25, boxH * 0.25]) {
-                                        if (tryDot(pos.x, boxY + vo)) { dotPlaced = true; dotX = pos.x; dotY = boxY + vo; break; }
-                                    }
+                                // 放置在色块中心
+                                let dotX = pos.x;
+                                let dotY = boxY;
 
-                                    if (!dotPlaced && pos.bestSlice) {
-                                        let sy = (pos.bestSlice.y - APP_CONFIG.minYear) * Core.state.zoom;
-                                        if (tryDot(pos.bestSlice.x, sy)) { dotPlaced = true; dotX = pos.bestSlice.x; dotY = sy; }
-                                    }
+                                let dot = document.createElement('div');
+                                dot.className = `era-dot ${group.groupId}`;
+                                dot.style.cssText = `
+                                            position: absolute;
+                                            border-radius: 50%;
+                                            background: rgba(255,255,255,0.4);
+                                            cursor: help;
+                                            z-index: 3000;
+                                            transition: all 0.2s;
+                                            pointer-events: auto;
+                                        `;
+                                dot.style.left = (dotX - dotSize / 2) + 'px';
+                                dot.style.top = (dotY - dotSize / 2) + 'px';
+                                dot.style.width = dotSize + 'px';
+                                dot.style.height = dotSize + 'px';
+                                dot.title = txt;
 
-                                    if (dotPlaced) {
-                                        let dot = document.createElement('div');
-                                        dot.className = `era-dot absolute rounded-full bg-white/40 cursor-help hover:bg-white hover:scale-150 hover:shadow-[0_0_5px_rgba(255,255,255,0.8)] transition-all duration-200 z-[60]`;
-                                        // 圆点无 translate，需算回左上角
-                                        dot.style.left = (dotX - dotSize / 2) + 'px';
-                                        dot.style.top = (dotY - dotSize / 2) + 'px';
-                                        dot.style.width = dotSize + 'px';
-                                        dot.style.height = dotSize + 'px';
-                                        dot.title = txt;
-                                        dot.onclick = (e) => {
-                                            e.stopPropagation();
-                                            Core.ui.setFocus(group.groupId);
-                                            Core.ui.showDetails(group, Core.getStyle(group));
-                                        };
-                                        labelsFrag.appendChild(dot);
-                                    }
-                                }
+                                dot.onmouseenter = () => {
+                                    dot.style.background = 'white';
+                                    dot.style.transform = 'scale(1.5)';
+                                    dot.style.boxShadow = '0 0 5px rgba(255,255,255,0.8)';
+                                };
+                                dot.onmouseleave = () => {
+                                    dot.style.background = 'rgba(255,255,255,0.4)';
+                                    dot.style.transform = 'scale(1)';
+                                    dot.style.boxShadow = 'none';
+                                };
+                                dot.onclick = (e) => {
+                                    e.stopPropagation();
+                                    Core.ui.setFocus(group.groupId);
+                                    Core.ui.showDetails(group, Core.getStyle(group));
+                                };
+                                labelsFrag.appendChild(dot);
                             }
                         }
                     });
-                    // [Fix] Mount to labels-layer which has z-index 2000
+
+                    // [Fix] Mount labels and dots to labels-layer
                     const labelLayer = document.getElementById('labels-layer');
                     if (labelLayer) {
                         labelLayer.innerHTML = ''; // Clear previous
@@ -1660,11 +1773,40 @@
 
                     const group = Core.state.regimeGroups.find(g => g.groupId === groupId);
                     if (group) Core.render.drawConnections(group, '#fff');
+
+                    // [Fix - Ultimate] Clone label to body to bypass ALL stacking contexts
+                    document.querySelectorAll('.era-label.' + groupId).forEach(el => {
+                        const rect = el.getBoundingClientRect();
+                        const clone = el.cloneNode(true);
+                        clone.className += ' temp-label-clone is-focused';
+                        clone.style.position = 'fixed';
+                        clone.style.left = rect.left + 'px';
+                        clone.style.top = rect.top + 'px';
+                        clone.style.width = rect.width + 'px';
+                        clone.style.height = rect.height + 'px';
+                        clone.style.transform = 'none'; // remove translate(-50%)
+                        clone.style.margin = '0';
+                        clone.style.zIndex = '999999';
+                        clone.style.opacity = '1';
+                        clone.style.pointerEvents = 'none';
+                        document.body.appendChild(clone);
+
+                        // Hide original to avoid double rendering artifact
+                        el.style.opacity = '0';
+                    });
                 },
                 clearFocus: function () {
                     Core.state.focusedGroupId = null;
                     document.body.classList.remove('mode-focus');
-                    document.querySelectorAll('.is-focused').forEach(el => el.classList.remove('is-focused'));
+
+                    // Cleanup clones
+                    document.querySelectorAll('.temp-label-clone').forEach(el => el.remove());
+
+                    // Restore original styles
+                    document.querySelectorAll('.is-focused').forEach(el => {
+                        el.classList.remove('is-focused');
+                        if (el.style.opacity === '0') el.style.opacity = '';
+                    });
                     document.getElementById('connections-layer').innerHTML = '';
                 },
                 showDetails: function (group, style) {
@@ -1677,7 +1819,7 @@
                     panel.classList.add(centerRatio > 0.5 ? 'panel-left' : 'panel-right');
                     requestAnimationFrame(() => panel.classList.add('panel-open'));
 
-                    // 1. 遍历所有片段，收集该政权历史上所有的宗主关系 (保持原逻辑不变)
+                    // 1. 遍历所有片段，收集该政权历史上所有的宗主关系
                     const uniqueSuzerains = new Set();
 
                     group.fragments.forEach(f => {
@@ -1713,6 +1855,7 @@
                         const list = Array.from(uniqueSuzerains).join(' <span style="color:var(--slate-500)">/</span> ');
                         suzerainHtml = `<div class="suzerain-tag">宗主: ${list}</div>`;
                     }
+
                     const f0 = group.fragments[0];
                     const typeMap = { 'C': '中原', 'Q': '征服', 'R': '割据', 'N': '部族', 'F': '边疆', 'T': '过渡', 'V': '藩属' };
                     const typeLabel = typeMap[group.regimeCode.charAt(0)] || '未知';
@@ -1741,11 +1884,12 @@
                         let barsHtml = '';
                         let timeTexts = [];
 
-                        frags.forEach(f => {
+                        // 使用索引 i 来增加 z-index
+                        frags.forEach((f, i) => {
                             const left = ((f.start - group.minStart) / totalDur) * 100;
                             const width = ((f.end - f.start) / totalDur) * 100;
-                            // [Fix] Add top:0 and ensure height is 100%
-                            barsHtml += `<div class="absolute top-0 h-full opacity-80" style="left:${left}%; width:${width}%; background:${style.bg || '#888'}; border-radius:1px;"></div>`;
+                            // [Fix] Use inline styles instead of Tailwind classes
+                            barsHtml += `<div style="position:absolute; top:0; left:${left}%; width:${width}%; height:100%; background:${style.bg || '#888'}; opacity:0.9; border-radius:1px; min-width:3px; z-index:${10 + i};"></div>`;
                             timeTexts.push(`${f.start}~${f.end}`);
                         });
 

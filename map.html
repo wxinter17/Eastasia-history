@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>History Map View (v14.01)</title>
+    <title>History Map View (v14.02)</title>
 
     <script>
         window.onerror = function (msg, url, line, col, error) {
@@ -1127,7 +1127,7 @@
             currentRegion: null,
             timelineMinYear: -200,
             timelineMaxYear: 2024,
-            currentYear: 2024,
+            currentYear: -2070, // 初始从夏朝开始
             pendingSwitchRegion: null,
             lockedRegimeId: null
         };
@@ -1146,6 +1146,10 @@
             },
 
             init() {
+                // [Fix] 禁用浏览器默认的滚动恢复，确保每次刷新都从初始年份(夏朝)开始
+                if ('scrollRestoration' in history) {
+                    history.scrollRestoration = 'manual';
+                }
                 console.log("正在初始化地图...");
                 MapCtrl.init(); // 初始化 Leaflet
                 // 【新增】必须在这里显式调用渲染，否则地图上只有底图，没有色块
@@ -1320,10 +1324,10 @@
                 }
 
                 // 6. 时间轴归位
-                State.currentYear = 2024;
+                State.currentYear = -2070; // 重置回夏朝
                 const yearBtn = document.getElementById('cursor-year-btn');
-                if (yearBtn) yearBtn.innerText = "2024";
-                if (TimelineCtrl && TimelineCtrl.scrollTo) TimelineCtrl.scrollTo(2024);
+                if (yearBtn) yearBtn.innerText = "-2070";
+                if (TimelineCtrl && TimelineCtrl.scrollTo) TimelineCtrl.scrollTo(-2070);
 
                 UICtrl.showToast("♻️ 地图已重置");
             },
@@ -2002,25 +2006,41 @@
 
         const TimelineCtrl = {
             isProgrammaticScroll: false,
+            computedLayouts: [], // 存储所有计算好的切片布局数据
+            totalContentHeight: 0,
+            _virtualRaf: null,
 
             init() {
-                Logger.info("初始化时间轴...");
+                Logger.info("初始化时间轴 (Virtual Scroll Enabled)...");
                 const scroller = document.getElementById('waterfall-scroll');
                 const axisScroller = document.getElementById('timeline-axis-scroll');
 
                 scroller.addEventListener('scroll', () => {
                     axisScroller.scrollTop = scroller.scrollTop;
+
+                    // [Virtual Scroll] 触发虚拟渲染
+                    if (!this._virtualRaf) {
+                        this._virtualRaf = requestAnimationFrame(() => {
+                            this.virtualRender();
+                            this._virtualRaf = null;
+                        });
+                    }
+
                     if (this.isProgrammaticScroll) return;
+
                     const midPx = scroller.scrollTop + (scroller.clientHeight / 2);
                     const newYear = Math.round(State.timelineMinYear + (midPx / CONFIG.pixelsPerYear));
+
                     if (State.currentYear !== newYear) {
                         State.currentYear = newYear;
                         document.getElementById('cursor-year-btn').innerText = State.currentYear;
-                        if (!this._raf) {
-                            this._raf = requestAnimationFrame(() => {
+
+                        // 使用防抖更新高亮，避免滚动时过频计算
+                        if (!this._highlightTimer) {
+                            this._highlightTimer = setTimeout(() => {
                                 MapCtrl.updateHighlight(State.currentYear);
-                                this._raf = null;
-                            });
+                                this._highlightTimer = null;
+                            }, 100);
                         }
                     }
                 }, { passive: true });
@@ -2037,13 +2057,10 @@
                 window.addEventListener('touchend', () => dragging = false);
             },
 
-            render(regimes, preserveYear) {
+            // [Phase 1] 纯计算布局，生成 Layout Data
+            calculateLayout(regimes) {
+                this.computedLayouts = [];
                 if (!regimes || !Array.isArray(regimes)) return;
-                const contentBox = document.getElementById('waterfall-content');
-                const axisContent = document.getElementById('timeline-axis-content');
-                const gridBg = document.getElementById('timeline-grid-bg');
-
-                contentBox.innerHTML = ""; axisContent.innerHTML = ""; gridBg.innerHTML = "";
 
                 let starts = regimes.map(r => parseInt(r.startStr)).filter(n => !isNaN(n));
                 let ends = regimes.map(r => r.endStr === 'present' ? 2024 : parseInt(r.endStr)).filter(n => !isNaN(n));
@@ -2057,21 +2074,34 @@
                 State.timelineMaxYear = Math.max(...ends) + 50;
                 if (isNaN(State.timelineMaxYear) || !isFinite(State.timelineMaxYear)) State.timelineMaxYear = 2024;
 
-                const totalHeight = (State.timelineMaxYear - State.timelineMinYear) * CONFIG.pixelsPerYear;
-                contentBox.style.height = totalHeight + 'px';
-                axisContent.style.height = totalHeight + 'px';
-                gridBg.style.height = totalHeight + 'px';
+                this.totalContentHeight = (State.timelineMaxYear - State.timelineMinYear) * CONFIG.pixelsPerYear;
 
-                if (totalHeight > 0 && totalHeight < 1000000) {
+                // 设置容器高度 (一次性)
+                const contentBox = document.getElementById('waterfall-content');
+                const axisContent = document.getElementById('timeline-axis-content');
+                const gridBg = document.getElementById('timeline-grid-bg');
+
+                contentBox.style.height = this.totalContentHeight + 'px';
+                axisContent.style.height = this.totalContentHeight + 'px';
+                gridBg.style.height = this.totalContentHeight + 'px';
+
+                // 渲染固定背景 (Axis & Grid) - 数量少，直接渲染
+                axisContent.innerHTML = ""; gridBg.innerHTML = "";
+                if (this.totalContentHeight > 0 && this.totalContentHeight < 1000000) {
+                    const dfMark = document.createDocumentFragment();
+                    const dfLine = document.createDocumentFragment();
                     for (let y = Math.floor(State.timelineMinYear / 100) * 100; y <= State.timelineMaxYear; y += 100) {
                         const px = (y - State.timelineMinYear) * CONFIG.pixelsPerYear;
                         const m = document.createElement('div'); m.className = 'timeline-year-mark'; m.innerText = y; m.style.top = px + 'px';
-                        axisContent.appendChild(m);
+                        dfMark.appendChild(m);
                         const line = document.createElement('div'); line.className = 'timeline-grid-line'; line.style.top = px + 'px';
-                        gridBg.appendChild(line);
+                        dfLine.appendChild(line);
                     }
+                    axisContent.appendChild(dfMark);
+                    gridBg.appendChild(dfLine);
                 }
 
+                // 计算泳道 (Lanes)
                 const lanes = [];
                 regimes.forEach(r => {
                     let assignedLane = -1;
@@ -2082,11 +2112,10 @@
                     r._globalLane = assignedLane;
                 });
 
+                // 时间切片计算
                 let timePoints = new Set();
                 regimes.forEach(r => { timePoints.add(r._start); timePoints.add(r._end); });
                 const sortedPoints = Array.from(timePoints).sort((a, b) => a - b);
-
-                const createdSlices = [];
 
                 for (let i = 0; i < sortedPoints.length - 1; i++) {
                     const t1 = sortedPoints[i];
@@ -2099,7 +2128,6 @@
                     const unitWidth = 100 / count;
                     const zIndexBase = 50000 - (i * 100);
 
-                    // --- 请替换 render 函数中 active.forEach 内部的逻辑 ---
                     active.forEach((r, idx) => {
                         const left = idx * unitWidth;
                         const width = unitWidth;
@@ -2107,104 +2135,146 @@
                         const actualHeight = Math.max((t2 - t1) * CONFIG.pixelsPerYear, 0);
                         const bottomPx = topPx + actualHeight;
 
-                        // (合并切片的逻辑保持不变...)
-                        const lastSliceObj = createdSlices.slice().reverse().find(s => s.regimeId === r._id);
+                        // 合并逻辑 (基于数据)
+                        // 在 this.computedLayouts 中倒序查找
                         let merged = false;
-                        if (lastSliceObj) {
-                            if (Math.abs(lastSliceObj.bottom - topPx) < 1.5) {
-                                if (Math.abs(lastSliceObj.left - left) < 2.0 && Math.abs(lastSliceObj.width - width) < 2.0) {
-                                    const newHeight = parseFloat(lastSliceObj.el.style.height) + actualHeight;
-                                    lastSliceObj.el.style.height = newHeight + 'px';
-                                    lastSliceObj.bottom = bottomPx;
-                                    merged = true;
+                        for (let k = this.computedLayouts.length - 1; k >= 0; k--) {
+                            const last = this.computedLayouts[k];
+                            // 优化：如果 last.bottom 离 topPx 太远，直接停止搜索 (假设大致有序)
+                            if (topPx - last.bottom > 100) break;
+
+                            if (last.regimeId === r._id) {
+                                if (Math.abs(last.bottom - topPx) < 1.5) {
+                                    if (Math.abs(last.left - left) < 2.0 && Math.abs(last.width - width) < 2.0) {
+                                        last.height += actualHeight;
+                                        last.bottom = bottomPx;
+                                        merged = true;
+                                        break; // 找到即停
+                                    }
                                 }
                             }
                         }
                         if (merged) return;
 
-                        const div = document.createElement('div');
-                        const tier = r.tier;
-
-                        // ============================================================
-                        // [关键修改] 调用父级(index.html)的 getStyle 以保持统一样式
-                        // ============================================================
+                        // 预计算 Style
                         let style = { bg: '#666', border: 'rgba(0,0,0,0.1)', className: 'texture-N' };
-
                         if (window.parent && window.parent.EastAsiaApp && window.parent.EastAsiaApp.getStyle) {
-                            // 传入参数：代码, 名称, 宗主代码, 宗主类型
-                            style = window.parent.EastAsiaApp.getStyle(
-                                r.regimeCode,
-                                r.name,
-                                r.suzerainCode || r.suzerain,
-                                r.suzerainType
-                            );
+                            style = window.parent.EastAsiaApp.getStyle(r.regimeCode, r.name, r.suzerainCode || r.suzerain, r.suzerainType);
                         }
 
-                        // 1. 应用 Class (如 texture-V, texture-J)
-                        div.className = `regime-slice ${style.className || ''} ` + (tier === 1 ? 'tier-1' : tier === 2 ? 'tier-2' : 'tier-3');
-
-                        // 2. 应用颜色和纹理变量
-                        div.style.backgroundColor = style.bg;
-                        div.style.color = style.textColor || '#fff';
-
-                        if (style.pattern) {
-                            div.style.setProperty('--pat-color', style.pattern);
-                        }
-
-                        // 3. 应用边框 (处理虚线框)
-                        if (style.isDashed) {
-                            div.style.borderStyle = 'dashed';
-                            div.style.borderColor = style.border;
-                            div.style.borderWidth = '2px';
-                            div.style.zIndex = zIndexBase + idx + 100; // 提升层级防止遮挡
-                        } else {
-                            div.style.border = '1px solid rgba(0,0,0,0.1)';
-                        }
-                        // ============================================================
-
-                        div.style.top = topPx + 'px';
-                        div.style.height = actualHeight + 'px';
-                        div.style.left = left + '%';
-                        div.style.width = `calc(${width}% - 1px)`;
-                        div.style.zIndex = zIndexBase + idx;
-
-                        if (actualHeight < 20) div.classList.add('tiny-slice');
-
-                        const lockIcon = (State.lockedRegimeId === r._id) ? '🔒 ' : '';
-                        const widthPx = (width / 100) * 400;
-
-                        // (字体大小计算逻辑保持不变...)
-                        let fontSize = 10;
-                        let fontClass = '';
-                        if (tier === 1) fontClass = 'font-tier-1';
-                        else if (tier === 2) fontClass = 'font-tier-2';
-                        else fontClass = 'font-tier-3';
-
-                        if (width < 95) {
-                            if (tier === 1) fontSize = Math.max(10, Math.min(30, widthPx / 3.5));
-                            else if (tier === 2) fontSize = Math.max(10, Math.min(20, widthPx / 4));
-                            else fontSize = Math.max(10, Math.min(15, widthPx / 5));
-                        } else {
-                            if (tier === 1) fontSize = Math.max(20, Math.min(40, widthPx / 3));
-                            else if (tier === 2) fontSize = Math.max(15, Math.min(30, widthPx / 4));
-                            else fontSize = Math.max(10, Math.min(20, widthPx / 5));
-                        }
-                        fontSize = Math.min(fontSize, actualHeight * 0.9);
-                        fontSize = Math.max(10, fontSize);
-
-                        div.innerHTML = `<div class="slice-label-sticky"><span class="slice-text ${fontClass}" style="font-size:${fontSize}px;">${lockIcon}${r.name}</span></div>`;
-
-                        // 点击事件保持不变
-                        div.onclick = (e) => { e.stopPropagation(); this.handleSliceClick(r); };
-                        if (State.lockedRegimeId === r._id) div.classList.add('active-locked');
-
-                        contentBox.appendChild(div);
-                        createdSlices.push({ regimeId: r._id, el: div, top: topPx, bottom: bottomPx, left: left, width: width });
+                        // 生成 Layout 对象
+                        this.computedLayouts.push({
+                            regimeId: r._id,
+                            regime: r,
+                            top: topPx,
+                            bottom: bottomPx,
+                            height: actualHeight,
+                            left: left,
+                            width: width,
+                            style: style,
+                            tier: r.tier,
+                            zIndex: zIndexBase + idx
+                        });
                     });
                 }
+            },
 
-                const targetYear = (typeof preserveYear === 'number' && !isNaN(preserveYear)) ? preserveYear : (minStart + 50);
-                setTimeout(() => this.scrollTo(targetYear), 50);
+            // [Phase 2] 虚拟渲染 (只渲染可见部分)
+            virtualRender() {
+                if (!this.computedLayouts.length) return;
+                const scroller = document.getElementById('waterfall-scroll');
+                const contentBox = document.getElementById('waterfall-content');
+                if (!scroller || !contentBox) return;
+
+                const scrollTop = scroller.scrollTop;
+                const clientHeight = scroller.clientHeight || 800;
+
+                // 缓冲区：上下各多渲染 1 个屏幕高度，保证丝滑
+                const buffer = clientHeight * 1.5;
+                const startY = scrollTop - buffer;
+                const endY = scrollTop + clientHeight + buffer;
+
+                // 筛选可见项
+                // (由于 computedLayouts 大致按 top 排序，这里可以用二分查找优化，但直接 filter 对于 <5000 条数据也足够快)
+                const visibleItems = this.computedLayouts.filter(item => {
+                    return item.bottom > startY && item.top < endY;
+                });
+
+                // Diff & Render
+                // 简单粗暴策略：直接重置 innerHTML 
+                // 移动端优化：使用 DocumentFragment
+                const fragment = document.createDocumentFragment();
+
+                visibleItems.forEach(item => {
+                    const div = document.createElement('div');
+                    const r = item.regime;
+
+                    div.className = `regime-slice ${item.style.className || ''} ` + (item.tier === 1 ? 'tier-1' : item.tier === 2 ? 'tier-2' : 'tier-3');
+                    div.style.backgroundColor = item.style.bg;
+                    div.style.color = item.style.textColor || '#fff';
+                    if (item.style.pattern) div.style.setProperty('--pat-color', item.style.pattern);
+
+                    if (item.style.isDashed) {
+                        div.style.borderStyle = 'dashed';
+                        div.style.borderColor = item.style.border;
+                        div.style.borderWidth = '2px';
+                        div.style.zIndex = item.zIndex + 100;
+                    } else {
+                        div.style.border = '1px solid rgba(0,0,0,0.1)';
+                        div.style.zIndex = item.zIndex;
+                    }
+
+                    div.style.top = item.top + 'px';
+                    div.style.height = item.height + 'px';
+                    div.style.left = item.left + '%';
+                    div.style.width = `calc(${item.width}% - 1px)`;
+
+                    if (item.height < 20) div.classList.add('tiny-slice');
+                    if (State.lockedRegimeId === r._id) div.classList.add('active-locked');
+
+                    const lockIcon = (State.lockedRegimeId === r._id) ? '🔒 ' : '';
+
+                    // 字体大小计算 (运行时计算以适应变化)
+                    const widthPx = (item.width / 100) * 400; // 假设容器宽400左右，或者 scroller.clientWidth
+                    let fontSize = 10;
+                    if (item.width < 95) {
+                        if (item.tier === 1) fontSize = Math.max(10, Math.min(30, widthPx / 3.5));
+                        else fontSize = Math.max(10, Math.min(15, widthPx / 5));
+                    } else {
+                        if (item.tier === 1) fontSize = Math.max(20, Math.min(40, widthPx / 3));
+                        else fontSize = Math.max(10, Math.min(20, widthPx / 5));
+                    }
+                    fontSize = Math.min(fontSize, item.height * 0.9);
+                    fontSize = Math.max(10, fontSize);
+
+                    let fontClass = item.tier === 1 ? 'font-tier-1' : item.tier === 2 ? 'font-tier-2' : 'font-tier-3';
+
+                    div.innerHTML = `<div class="slice-label-sticky"><span class="slice-text ${fontClass}" style="font-size:${fontSize}px;">${lockIcon}${r.name}</span></div>`;
+
+                    div.onclick = (e) => { e.stopPropagation(); this.handleSliceClick(r); };
+                    fragment.appendChild(div);
+                });
+
+                contentBox.innerHTML = '';
+                contentBox.appendChild(fragment);
+            },
+
+            // 入口函数
+            render(regimes, preserveYear) {
+                // 1. 计算布局
+                this.calculateLayout(regimes);
+
+                // 2. 初始滚动位置 [Fix] 使用 State.currentYear 而不是当前年份
+                const targetYear = (typeof preserveYear === 'number' && !isNaN(preserveYear)) ? preserveYear : State.currentYear;
+
+                // 需要先算出目标位置再 Render，否则 scrollTop 为 0
+                const px = (targetYear - State.timelineMinYear) * CONFIG.pixelsPerYear;
+                const scroller = document.getElementById('waterfall-scroll');
+                if (scroller) {
+                    scroller.scrollTop = Math.max(0, px - (scroller.clientHeight / 2));
+                    // 初始强制渲染一次 (因为 scroll事件可能是异步的)
+                    this.virtualRender();
+                }
             },
 
             handleSliceClick(r) {
@@ -2212,9 +2282,8 @@
                     try {
                         UICtrl.openRegimeModal(r);
                     } catch (e) {
-                        console.warn("Modal open failed, resetting lock.");
                         State.lockedRegimeId = null;
-                        this.render(State.dataMap[State.currentRegion.code].regimes, State.currentYear);
+                        this.virtualRender(); // 只需重绘 DOM (更新 active-locked class)
                     }
                 } else {
                     State.lockedRegimeId = r._id;
@@ -2222,7 +2291,9 @@
                     if (State.currentYear < r._start || State.currentYear > r._end) {
                         targetYear = r._start + 5;
                     }
-                    this.render(State.dataMap[State.currentRegion.code].regimes, targetYear);
+                    this.scrollTo(targetYear); // scrollTo 会更新 currentYear 并可能触发 scroll
+                    // 需要手动触发一次 virtualRender 以更新高亮样式
+                    this.virtualRender();
                     MapCtrl.updateHighlight(targetYear);
                     UICtrl.showToast(`已锁定: ${r.name}`);
                 }
@@ -2232,9 +2303,15 @@
                 this.isProgrammaticScroll = true;
                 const px = (y - State.timelineMinYear) * CONFIG.pixelsPerYear;
                 const container = document.getElementById('waterfall-scroll');
-                container.scrollTop = px - (container.clientHeight / 2);
+                container.scrollTop = px - (container.clientHeight / 2); // 这会触发 scroll -> virtualRender
+
                 State.currentYear = y;
-                document.getElementById('cursor-year-btn').innerText = y;
+                // [Fix] 显式更新游标文字
+                const cursorBtn = document.getElementById('cursor-year-btn');
+                if (cursorBtn) cursorBtn.innerText = y;
+
+                if (MapCtrl && MapCtrl.updateHighlight) MapCtrl.updateHighlight(y);
+
                 setTimeout(() => { this.isProgrammaticScroll = false; }, 150);
             }
         };
@@ -2595,7 +2672,7 @@
         window.addEventListener('load', () => App.init());
         // [Sync] 暴露给父级的同步 API
         window.getCenterYear = function () {
-            if (!State || typeof State.currentYear === 'undefined') return 2025;
+            if (!State || typeof State.currentYear === 'undefined') return -2070; // 夏朝开始
             // 优先返回 State 中的当前年份（因为 TimelineCtrl 滚动时会实时更新它）
             return State.currentYear;
         };
