@@ -40,6 +40,12 @@
         }
 
         /* --- 基础设置 --- */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
         html,
         body {
             margin: 0;
@@ -917,6 +923,16 @@
                     }
                 });
 
+                // [UX] 点击面板 header 任意位置关闭面板
+                const panelHeader = document.querySelector('#editor-panel .panel-header');
+                if (panelHeader) {
+                    panelHeader.addEventListener('click', (e) => {
+                        // 如果点击的是按钮或其子元素，忽略
+                        if (e.target.closest('button') || e.target.closest('.jump-btn')) return;
+                        this.ui.closePanel();
+                    });
+                }
+
                 const searchInput = document.getElementById('search-input');
                 const handleSearch = (val) => {
                     const term = val.trim().toLowerCase();
@@ -1774,38 +1790,16 @@
                     const group = Core.state.regimeGroups.find(g => g.groupId === groupId);
                     if (group) Core.render.drawConnections(group, '#fff');
 
-                    // [Fix - Ultimate] Clone label to body to bypass ALL stacking contexts
-                    document.querySelectorAll('.era-label.' + groupId).forEach(el => {
-                        const rect = el.getBoundingClientRect();
-                        const clone = el.cloneNode(true);
-                        clone.className += ' temp-label-clone is-focused';
-                        clone.style.position = 'fixed';
-                        clone.style.left = rect.left + 'px';
-                        clone.style.top = rect.top + 'px';
-                        clone.style.width = rect.width + 'px';
-                        clone.style.height = rect.height + 'px';
-                        clone.style.transform = 'none'; // remove translate(-50%)
-                        clone.style.margin = '0';
-                        clone.style.zIndex = '999999';
-                        clone.style.opacity = '1';
-                        clone.style.pointerEvents = 'none';
-                        document.body.appendChild(clone);
-
-                        // Hide original to avoid double rendering artifact
-                        el.style.opacity = '0';
-                    });
+                    // [Fix] Remove clone logic. CSS z-index (2500) is sufficient now that header is 4000.
+                    // This fixes the "floating ghost label" bug on scroll.
                 },
                 clearFocus: function () {
                     Core.state.focusedGroupId = null;
                     document.body.classList.remove('mode-focus');
 
-                    // Cleanup clones
-                    document.querySelectorAll('.temp-label-clone').forEach(el => el.remove());
-
                     // Restore original styles
                     document.querySelectorAll('.is-focused').forEach(el => {
                         el.classList.remove('is-focused');
-                        if (el.style.opacity === '0') el.style.opacity = '';
                     });
                     document.getElementById('connections-layer').innerHTML = '';
                 },

@@ -1283,6 +1283,24 @@
                 if (typeof TimelineCtrl !== 'undefined' && TimelineCtrl.init) {
                     TimelineCtrl.init();
                 }
+
+                // [UX] 点击面板 header 任意位置关闭面板
+                const aiHeader = document.querySelector('#ai-panel .ai-header');
+                if (aiHeader) {
+                    aiHeader.addEventListener('click', (e) => {
+                        if (e.target.closest('button') || e.target.closest('.panel-controls')) return;
+                        UICtrl.closeAIPanel();
+                    });
+                }
+
+                const modalHeader = document.querySelector('#regime-modal .rd-header');
+                if (modalHeader) {
+                    modalHeader.addEventListener('click', (e) => {
+                        // 排除普通关闭按钮和动态生成的跳转按钮
+                        if (e.target.closest('button') || e.target.closest('.header-jump-btn')) return;
+                        UICtrl.closeModal('regime-modal');
+                    });
+                }
             },
 
             // --- [修复] 地图页专用复位函数 ---
