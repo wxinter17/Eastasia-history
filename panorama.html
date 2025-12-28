@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v87.02)</title>
+    <title>东亚历史全景 (v87.03)</title>
     <!-- [Unified CSS] Native Style (Merged) -->
     <link
         href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700;900&family=Inter:wght@400;600&display=swap"
@@ -189,16 +189,14 @@
         }
 
         body:not(.mode-focus) .era-block-fragment:hover {
-            z-index: 50 !important;
+            /* [Fix] 不再提升 z-index，防止覆盖相邻色块 */
             filter: brightness(1.2) contrast(1.1);
-            transform: scaleY(1.02);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
         }
 
         .group-hovered {
             filter: brightness(1.2) contrast(1.1) !important;
             opacity: 1 !important;
-            z-index: 40 !important;
+            /* [Fix] 不再提升 z-index，防止覆盖相邻色块 */
         }
 
         /* --- Focus Mode --- */
@@ -214,8 +212,9 @@
             filter: none !important;
             /* [Fix] Do not raise Z-Index above context limit. Just rely on labels-layer being higher. */
             z-index: 50 !important;
-            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9), 0 10px 40px rgba(0, 0, 0, 0.9) !important;
-            transform: scale(1.005);
+            /* [Fix] 移除白色边框 */
+            box-shadow: none !important;
+            transform: none;
         }
 
         /* --- Dots Focus Mode --- */
@@ -229,7 +228,8 @@
             opacity: 1 !important;
             filter: none !important;
             transform: scale(1.3);
-            box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+            /* [Fix] 移除白色边框 */
+            box-shadow: none;
         }
 
         .era-dimmed {
@@ -268,6 +268,11 @@
             z-index: 9000 !important;
             /* Context 内置顶 */
             transform: translate(-50%, -50%) scale(1.1);
+            /* [Fix] 确保无白色边框 */
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+            background: transparent !important;
         }
 
         /* [Fix] Progress Bar Style Override */
@@ -996,15 +1001,19 @@
                     if (!geoCode) return;
                     if (!uniqueRegs[geoCode]) uniqueRegs[geoCode] = geoName;
 
-                    const key = r.regime_name || r.name || "未知政权";
+                    const regimeName = r.regime_name || r.name || "未知政权";
+                    const regimeCode = r.regime_code || "C11";
+                    // [Fix] 使用 name + code 作为唯一标识，防止同名不同政权被错误合并
+                    // 例如：战国秦(R1150) 和 秦朝秦(C2100) 必须分开
+                    const key = regimeName + '|' + regimeCode;
 
                     // 初始化 Group
                     if (!groups[key]) {
                         groups[key] = {
                             id: key,
                             groupId: 'g-' + this.logic.simpleHash(key),
-                            name: key,
-                            regimeCode: r.regime_code || "C11",
+                            name: regimeName,  // 显示名称仍然是 regimeName
+                            regimeCode: regimeCode,
                             minStart: 9999, maxEnd: -9999,
                             explicitTier: parseInt(r.regime_tier || r.level || 3),
                             fragments: [],
@@ -1374,17 +1383,42 @@
                     let mergedSlices = [];
                     if (allRenderSlices.length > 0) {
                         let currentMerge = allRenderSlices[0];
-                        currentMerge.colspan = 1; currentMerge.startCol = currentMerge.colIdx;
+                        currentMerge.colspan = 1;
+                        currentMerge.startCol = currentMerge.colIdx;
+                        // [Fix] 累加实际宽度（以"列宽百分比单位"计算）
+                        // 例如：100% 宽度 = 1.0 个列宽单位，50% 宽度 = 0.5 个列宽单位
+                        currentMerge.totalWidthUnits = currentMerge.widthPct / 100;
+
                         for (let i = 1; i < allRenderSlices.length; i++) {
                             let next = allRenderSlices[i];
                             let prev = currentMerge;
-                            let isSame = next.groupId === prev.groupId &&
+
+                            // [Fix] 合并条件：
+                            // 1. 同政权、相邻列、时间对齐
+                            // 2. 边缘对齐：prev 必须占满右边缘，next 必须从左边缘开始
+                            let basicMatch = next.groupId === prev.groupId &&
                                 next.colIdx === (prev.startCol + prev.colspan) &&
                                 Math.abs(next.displayStart - prev.displayStart) < 0.1 &&
-                                Math.abs(next.displayEnd - prev.displayEnd) < 0.1 &&
-                                prev.widthPct >= 95;
-                            if (isSame) currentMerge.colspan++;
-                            else { mergedSlices.push(currentMerge); currentMerge = next; currentMerge.colspan = 1; currentMerge.startCol = currentMerge.colIdx; }
+                                Math.abs(next.displayEnd - prev.displayEnd) < 0.1;
+
+                            // prev 必须占据该列的最右侧（独占或右边缘对齐）
+                            let prevRightEdge = (prev.leftPct + prev.widthPct) >= 95;
+                            // next 必须从左边缘开始
+                            let nextLeftEdge = next.leftPct <= 5;
+
+                            let isSame = basicMatch && prevRightEdge && nextLeftEdge;
+                            if (isSame) {
+                                currentMerge.colspan++;
+                                // [Fix] 累加 next 的实际宽度
+                                currentMerge.totalWidthUnits += next.widthPct / 100;
+                            }
+                            else {
+                                mergedSlices.push(currentMerge);
+                                currentMerge = next;
+                                currentMerge.colspan = 1;
+                                currentMerge.startCol = currentMerge.colIdx;
+                                currentMerge.totalWidthUnits = currentMerge.widthPct / 100;
+                            }
                         }
                         mergedSlices.push(currentMerge);
                     }
@@ -1416,7 +1450,8 @@
                         if (hasR || (slice.colspan > 1 && !isRight)) el.classList.add('no-border-right');
 
                         let colWidthPct = 100 / colCount;
-                        let totalWidthPct = slice.colspan * (slice.widthPct / 100) * colWidthPct;
+                        // [Fix] 使用累加的实际宽度，而非 colspan * widthPct
+                        let totalWidthPct = slice.totalWidthUnits * colWidthPct;
                         let totalLeftPct = (slice.startCol * colWidthPct) + ((slice.leftPct / 100) * colWidthPct);
 
                         el.style.left = totalLeftPct + '%';
@@ -1429,6 +1464,8 @@
                         }
 
                         el.style.top = top + 'px'; el.style.height = h + 'px';
+                        // [Fix] 所有色块使用统一的 z-index，不会互相覆盖
+                        el.style.zIndex = 10;
                         el.__data__ = { group: slice.group, style: slice.style, fragment: slice };
                         el.onmouseenter = () => { if (!Core.state.focusedGroupId) { document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.add('group-hovered')); if (Core.state.features.connections) Core.render.drawConnections(slice.group, '#fff'); } };
                         el.onmouseleave = () => { if (!Core.state.focusedGroupId) { document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.remove('group-hovered')); document.getElementById('connections-layer').innerHTML = ''; } };
