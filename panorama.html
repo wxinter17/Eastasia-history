@@ -1159,26 +1159,54 @@
                 sliceFragmentsByRegion: function (fragments, colIdx, allGroups, regionIndexMap, layoutCache) {
                     if (!fragments || fragments.length === 0) return [];
 
+                    // ========== 阶段1：预排布（全局总分） ==========
                     const columnGroups = {};
                     fragments.forEach(f => {
-                        if (!columnGroups[f.groupId]) columnGroups[f.groupId] = { groupId: f.groupId, group: f.group, maxDuration: 0, hasLeft: false, hasRight: false, checked: false };
-                        columnGroups[f.groupId].maxDuration = Math.max(columnGroups[f.groupId].maxDuration, f.end - f.start);
-                        if (!columnGroups[f.groupId].checked) {
-                            const gFrags = f.group.fragments;
-                            columnGroups[f.groupId].hasLeft = gFrags.some(gf => regionIndexMap[gf.geoCode] === colIdx - 1);
-                            columnGroups[f.groupId].hasRight = gFrags.some(gf => regionIndexMap[gf.geoCode] === colIdx + 1);
-                            columnGroups[f.groupId].checked = true;
+                        if (!columnGroups[f.groupId]) {
+                            columnGroups[f.groupId] = {
+                                groupId: f.groupId,
+                                group: f.group,
+                                name: f.group.name,
+                                minStart: f.start,
+                                maxEnd: f.end
+                            };
                         }
+                        columnGroups[f.groupId].minStart = Math.min(columnGroups[f.groupId].minStart, f.start);
+                        columnGroups[f.groupId].maxEnd = Math.max(columnGroups[f.groupId].maxEnd, f.end);
                     });
 
-                    const groupScores = {};
+                    // 从所有groups获取所有fragments
+                    const allFragments = [];
+                    allGroups.forEach(g => {
+                        g.fragments.forEach(f => allFragments.push(f));
+                    });
+
+                    // 计算全局重叠（用于预排布）
                     Object.keys(columnGroups).forEach(gId => {
-                        const data = columnGroups[gId];
-                        let score = 0;
-                        if (data.hasLeft && !data.hasRight) score = -10000;
-                        else if (!data.hasLeft && data.hasRight) score = 10000;
-                        score -= data.maxDuration;
-                        groupScores[gId] = score;
+                        const cg = columnGroups[gId];
+                        let leftSame = 0, leftDiff = 0, rightSame = 0, rightDiff = 0;
+
+                        allFragments.forEach(af => {
+                            const afColIdx = regionIndexMap[String(af.geoCode).trim()];
+                            const afName = af.name.split('|')[0];
+                            const overlapStart = Math.max(af.start, cg.minStart);
+                            const overlapEnd = Math.min(af.end, cg.maxEnd);
+
+                            if (overlapEnd > overlapStart) {
+                                const duration = overlapEnd - overlapStart;
+                                const isSameName = (afName === cg.name);
+
+                                if (afColIdx === colIdx - 1) {
+                                    if (isSameName) leftSame += duration;
+                                    else leftDiff += duration;
+                                } else if (afColIdx === colIdx + 1) {
+                                    if (isSameName) rightSame += duration;
+                                    else rightDiff += duration;
+                                }
+                            }
+                        });
+
+                        cg.globalScore = (rightSame * 10 + rightDiff) - (leftSame * 10 + leftDiff);
                     });
 
                     const points = new Set();
@@ -1188,6 +1216,10 @@
 
                     if (!layoutCache[colIdx]) layoutCache[colIdx] = {};
 
+                    // ========== 阶段2：精细化处理 ==========
+                    let prevWidth = null;
+                    const positionCache = {}; // {groupId: {leftPct: number, width: number}}
+
                     for (let i = 0; i < sortedPoints.length - 1; i++) {
                         const pStart = sortedPoints[i];
                         const pEnd = sortedPoints[i + 1];
@@ -1195,15 +1227,100 @@
 
                         if (activeFrags.length > 0) {
                             const width = 100 / activeFrags.length;
-                            activeFrags.sort((a, b) => groupScores[a.groupId] - groupScores[b.groupId]);
+                            const widthChanged = (prevWidth !== null && Math.abs(width - prevWidth) > 0.1);
 
+                            // 检查每个政权的宽度是否变化
+                            const allWidthsUnchanged = activeFrags.every(f => {
+                                const prevPos = positionCache[f.groupId];
+                                if (prevPos === undefined) return false; // 新政权
+                                // 计算上一时间段该政权的宽度
+                                const prevW = prevPos.width;
+                                return Math.abs(width - prevW) < 0.1;
+                            });
+
+                            if (allWidthsUnchanged) {
+                                // 所有政权宽度都不变：按上一时间段的leftPct排序
+                                activeFrags.sort((a, b) => {
+                                    const posA = positionCache[a.groupId]?.leftPct || 0;
+                                    const posB = positionCache[b.groupId]?.leftPct || 0;
+                                    return posA - posB;
+                                });
+
+                                // [Debug]
+                                if (colIdx === 25) { // 河洛
+                                    console.log(`[${pStart}-${pEnd}继承位置] ${activeFrags.map(f => columnGroups[f.groupId].name).join(', ')}`);
+                                }
+                            } else {
+                                // 有宽度变化：重新计算
+                                if (prevWidth === null) {
+                                    // 第一个时间段：使用预排布
+                                    activeFrags.sort((a, b) => {
+                                        const scoreA = columnGroups[a.groupId]?.globalScore || 0;
+                                        const scoreB = columnGroups[b.groupId]?.globalScore || 0;
+                                        return scoreA - scoreB;
+                                    });
+                                } else {
+                                    // 宽度改变：基于当前时间段计算分数
+                                    activeFrags.sort((a, b) => {
+                                        const cgA = columnGroups[a.groupId];
+                                        const cgB = columnGroups[b.groupId];
+
+                                        let aLeft = 0, aRight = 0, bLeft = 0, bRight = 0;
+
+                                        allFragments.forEach(af => {
+                                            const afColIdx = regionIndexMap[String(af.geoCode).trim()];
+                                            const afName = af.name.split('|')[0];
+                                            const overlapStart = Math.max(af.start, pStart);
+                                            const overlapEnd = Math.min(af.end, pEnd);
+
+                                            if (overlapEnd > overlapStart) {
+                                                const dur = overlapEnd - overlapStart;
+
+                                                if (afColIdx === colIdx - 1) {
+                                                    if (afName === cgA.name) aLeft += dur * 10;
+                                                    else aLeft += dur;
+                                                    if (afName === cgB.name) bLeft += dur * 10;
+                                                    else bLeft += dur;
+                                                } else if (afColIdx === colIdx + 1) {
+                                                    if (afName === cgA.name) aRight += dur * 10;
+                                                    else aRight += dur;
+                                                    if (afName === cgB.name) bRight += dur * 10;
+                                                    else bRight += dur;
+                                                }
+                                            }
+                                        });
+
+                                        return (aRight - aLeft) - (bRight - bLeft);
+                                    });
+                                }
+
+                                // [Debug]
+                                if (colIdx === 36 || colIdx === 25) {
+                                    console.log(`[${pStart}-${pEnd}重算] ${activeFrags.map(f => columnGroups[f.groupId].name).join(', ')}`);
+                                }
+                            }
+
+                            prevWidth = width;
                             activeFrags.forEach((frag, idx) => {
                                 const newFrag = Object.assign({}, frag);
                                 newFrag.displayStart = pStart; newFrag.displayEnd = pEnd;
                                 newFrag.leftPct = idx * width; newFrag.widthPct = width;
                                 newFrag.group.visualSlices.push({ cIdx: colIdx, start: pStart, end: pEnd, left: newFrag.leftPct / 100, w: newFrag.widthPct / 100, dur: pEnd - pStart });
                                 slices.push(newFrag);
+
+                                // 更新位置缓存
+                                positionCache[frag.groupId] = {
+                                    leftPct: newFrag.leftPct,
+                                    width: width
+                                };
                             });
+
+                            // [Fix] 缓存此时间段的排序结果
+                            const timeKey = `${pStart}-${pEnd}`;
+                            layoutCache[colIdx][timeKey] = activeFrags.map((f, idx) => ({
+                                groupId: f.groupId,
+                                position: idx
+                            }));
                         }
                     }
                     return slices;
