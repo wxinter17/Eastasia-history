@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rcode CSV 数据转换器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 图标库 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { background-color: #0f172a; color: #e2e8f0; font-family: sans-serif; }
+        .drag-active { border-color: #3b82f6; background-color: rgba(59, 130, 246, 0.1); }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-2xl bg-gray-800 rounded-xl shadow-2xl border border-gray-700 p-6 space-y-6">
+        
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-gray-700 pb-4">
+            <div class="flex items-center gap-3">
+                <div class="p-2 bg-blue-900/50 rounded-lg">
+                    <i data-lucide="file-json" class="w-6 h-6 text-blue-400"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-white">CSV 数据转换器</h1>
+                    <p class="text-xs text-gray-400">适配 Rcode 仿真系统 (W1-W47 / -2070起)</p>
+                </div>
+            </div>
+            <div class="text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded border border-gray-700">
+                防重叠逻辑: [Start, End)
+            </div>
+        </div>
+
+        <!-- Logic Explanation -->
+        <div class="bg-blue-900/20 border border-blue-800 rounded-lg p-4 text-xs text-blue-200 space-y-1">
+            <p class="font-bold flex items-center gap-2"><i data-lucide="info" class="w-3 h-3"></i> 处理逻辑说明：</p>
+            <ul class="list-disc pl-5 opacity-80">
+                <li>自动识别 <strong>geo_name</strong> 并按字母排序映射到 W1-W47。</li>
+                <li><strong>首尾相接处理：</strong> 采用左闭右开原则。例如 1912-1949，包含1912，不含1949。</li>
+                <li><strong>例外：</strong> 如果 Start == End (同年)，则强制保留该年。</li>
+                <li>超出 -2070 到 2025 范围的年份将被自动忽略。</li>
+            </ul>
+        </div>
+
+        <!-- Upload Area -->
+        <div id="drop-zone" class="border-2 border-dashed border-gray-600 rounded-xl p-8 flex flex-col items-center justify-center text-center transition-colors cursor-pointer hover:border-gray-500 hover:bg-gray-800/50">
+            <input type="file" id="fileInput" accept=".csv" class="hidden" />
+            <i data-lucide="upload-cloud" class="w-10 h-10 text-gray-500 mb-3"></i>
+            <p class="text-sm font-medium text-gray-300">点击选择或拖拽 CSV 文件</p>
+            <p class="text-xs text-gray-500 mt-1">必需列: regime_code, start_year, end_year, geo_name</p>
+        </div>
+
+        <!-- Logs / Status -->
+        <div id="status-area" class="hidden">
+            <div class="bg-black/50 rounded-lg p-4 font-mono text-xs text-gray-400 border border-gray-700 h-40 overflow-y-auto custom-scrollbar" id="log-content">
+                <!-- Logs will appear here -->
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div id="action-area" class="hidden grid-cols-2 gap-4">
+            <button onclick="downloadJson()" class="flex items-center justify-center gap-2 bg-green-700 hover:bg-green-600 text-white py-3 rounded-lg font-bold transition">
+                <i data-lucide="download" class="w-4 h-4"></i> 下载 JSON 文件
+            </button>
+            <button onclick="copyJson()" class="flex items-center justify-center gap-2 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-bold transition">
+                <i data-lucide="clipboard" class="w-4 h-4"></i> 复制内容
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        // Init Icons
+        lucide.createIcons();
+
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('fileInput');
+        const statusArea = document.getElementById('status-area');
+        const actionArea = document.getElementById('action-area');
+        const logContent = document.getElementById('log-content');
+
+        let generatedJson = null;
+
+        // Configuration
+        const SYSTEM_START_YEAR = -2070;
+        const TOTAL_ROWS = 4096;
+        const TOTAL_COLS = 47;
+
+        // Drag & Drop Handlers
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-active'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-active'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-active');
+            if (e.dataTransfer.files.length) processFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) processFile(e.target.files[0]);
+        });
+
+        function log(msg, type = 'info') {
+            const color = type === 'error' ? 'text-red-400' : (type === 'success' ? 'text-green-400' : 'text-gray-400');
+            const line = document.createElement('div');
+            line.className = `mb-1 ${color}`;
+            line.innerHTML = `> ${msg}`;
+            logContent.appendChild(line);
+            logContent.scrollTop = logContent.scrollHeight;
+        }
+
+        function processFile(file) {
+            statusArea.classList.remove('hidden');
+            actionArea.classList.add('hidden');
+            logContent.innerHTML = '';
+            log(`正在读取文件: ${file.name}...`);
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const text = e.target.result;
+                convertCsvToJson(text);
+            };
+            reader.onerror = () => log("读取文件失败", "error");
+            reader.readAsText(file);
+        }
+
+        function parseCSV(text) {
+            // Simple CSV parser handling standard comma-separation
+            const lines = text.split(/\r?\n/);
+            const headers = lines[0].split(',').map(h => h.trim().toLowerCase()); // Normalize headers
+            
+            // Validate headers
+            const required = ['regime_code', 'start_year', 'end_year', 'geo_name'];
+            const missing = required.filter(r => !headers.includes(r));
+            if (missing.length > 0) {
+                log(`CSV 缺少必要的列头: ${missing.join(', ')}`, 'error');
+                return null;
+            }
+
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                
+                // Handle potential quotes roughly (assuming simple data for now)
+                const values = line.split(',');
+                if (values.length < headers.length) continue;
+
+                const row = {};
+                headers.forEach((h, idx) => {
+                    row[h] = values[idx] ? values[idx].trim() : '';
+                });
+                data.push(row);
+            }
+            return data;
+        }
+
+        function convertCsvToJson(csvText) {
+            const data = parseCSV(csvText);
+            if (!data) return;
+
+            log(`CSV 解析成功，共 ${data.length} 行数据。`);
+            log("正在建立列映射...");
+
+            // 1. Map Geo to Columns
+            const geoSet = new Set();
+            data.forEach(row => { if(row.geo_name) geoSet.add(row.geo_name); });
+            const sortedGeos = Array.from(geoSet).sort();
+            
+            if (sortedGeos.length > TOTAL_COLS) {
+                log(`警告: 地区数 (${sortedGeos.length}) 超过系统上限 47，将截断。`, 'error');
+            }
+            
+            const validGeos = sortedGeos.slice(0, TOTAL_COLS);
+            const geoMap = {};
+            validGeos.forEach((geo, idx) => geoMap[geo] = idx);
+            
+            log(`列映射完成: W1=${validGeos[0]} ... W${validGeos.length}=${validGeos[validGeos.length-1]}`);
+
+            // 2. Initialize Grid
+            const grid = Array.from({ length: TOTAL_ROWS }, () => 
+                Array.from({ length: TOTAL_COLS }, () => [])
+            );
+
+            // 3. Fill Data
+            let successCount = 0;
+            let skipCount = 0;
+
+            data.forEach(row => {
+                const geo = row.geo_name;
+                if (!geoMap.hasOwnProperty(geo)) return; // Skip unknown geo
+
+                const rcode = row.regime_code;
+                const start = parseInt(row.start_year);
+                const end = parseInt(row.end_year);
+
+                if (isNaN(start) || isNaN(end)) return;
+
+                const colIdx = geoMap[geo];
+
+                // Logic: [start, end) unless start == end
+                let loopEnd = end;
+                if (start === end) loopEnd = start + 1; // Include single year
+
+                for (let year = start; year < loopEnd; year++) {
+                    const rowIdx = year - SYSTEM_START_YEAR;
+                    
+                    if (rowIdx >= 0 && rowIdx < TOTAL_ROWS) {
+                        const cell = grid[rowIdx][colIdx];
+                        if (!cell.includes(rcode) && cell.length < 4) {
+                            cell.push(rcode);
+                            successCount++;
+                        }
+                    } else {
+                        skipCount++;
+                    }
+                }
+            });
+
+            // 4. Finalize
+            const result = {
+                rules: [
+                    `来源: Web转换器`,
+                    `包含地区: ${validGeos.length}个`,
+                    `逻辑: 左闭右开 [Start, End)`
+                ],
+                offset: SYSTEM_START_YEAR,
+                grid: grid
+            };
+
+            generatedJson = JSON.stringify(result); // Minified for size
+            
+            log(`转换完成！有效填充格子数: ${successCount}`, 'success');
+            if (skipCount > 0) log(`忽略越界年份数据: ${skipCount} (不在 -2070~2025 范围内)`);
+            
+            actionArea.classList.remove('hidden');
+            actionArea.classList.add('grid');
+        }
+
+        function downloadJson() {
+            if (!generatedJson) return;
+            const blob = new Blob([generatedJson], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `rcode_converted_${new Date().getTime()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function copyJson() {
+            if (!generatedJson) return;
+            navigator.clipboard.writeText(generatedJson).then(() => {
+                alert('JSON 已复制到剪贴板！\n请去仿真系统粘贴导入。');
+            }).catch(() => {
+                alert('复制失败，请使用下载功能。');
+            });
+        }
+    </script>
+</body>
+</html>

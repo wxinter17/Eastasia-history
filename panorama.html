@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v87.03)</title>
+    <title>东亚历史全景 (v87.04)</title>
     <!-- [Unified CSS] Native Style (Merged) -->
     <link
         href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700;900&family=Inter:wght@400;600&display=swap"
@@ -1218,6 +1218,7 @@
 
                     // ========== 阶段2：精细化处理 ==========
                     let prevWidth = null;
+                    let prevCount = null; // 上一时间段的政权数量
                     const positionCache = {}; // {groupId: {leftPct: number, width: number}}
 
                     for (let i = 0; i < sortedPoints.length - 1; i++) {
@@ -1228,9 +1229,10 @@
                         if (activeFrags.length > 0) {
                             const width = 100 / activeFrags.length;
                             const widthChanged = (prevWidth !== null && Math.abs(width - prevWidth) > 0.1);
+                            const countChanged = (prevCount !== null && prevCount !== activeFrags.length);
 
-                            // 检查每个政权的宽度是否变化
-                            const allWidthsUnchanged = activeFrags.every(f => {
+                            // [Fix] 检查每个政权的宽度是否变化 AND 成员数量是否变化
+                            const allWidthsUnchanged = !countChanged && activeFrags.every(f => {
                                 const prevPos = positionCache[f.groupId];
                                 if (prevPos === undefined) return false; // 新政权
                                 // 计算上一时间段该政权的宽度
@@ -1238,7 +1240,10 @@
                                 return Math.abs(width - prevW) < 0.1;
                             });
 
-                            if (allWidthsUnchanged) {
+                            // [Fix] 单政权独占整列：无需排序
+                            if (activeFrags.length === 1) {
+                                // 独占整列，idx=0会自动让leftPct=0
+                            } else if (allWidthsUnchanged) {
                                 // 所有政权宽度都不变：按上一时间段的leftPct排序
                                 activeFrags.sort((a, b) => {
                                     const posA = positionCache[a.groupId]?.leftPct || 0;
@@ -1246,10 +1251,7 @@
                                     return posA - posB;
                                 });
 
-                                // [Debug]
-                                if (colIdx === 25) { // 河洛
-                                    console.log(`[${pStart}-${pEnd}继承位置] ${activeFrags.map(f => columnGroups[f.groupId].name).join(', ')}`);
-                                }
+
                             } else {
                                 // 有宽度变化：重新计算
                                 if (prevWidth === null) {
@@ -1294,19 +1296,19 @@
                                     });
                                 }
 
-                                // [Debug]
-                                if (colIdx === 36 || colIdx === 25) {
-                                    console.log(`[${pStart}-${pEnd}重算] ${activeFrags.map(f => columnGroups[f.groupId].name).join(', ')}`);
-                                }
+
                             }
 
                             prevWidth = width;
+                            prevCount = activeFrags.length;
                             activeFrags.forEach((frag, idx) => {
                                 const newFrag = Object.assign({}, frag);
                                 newFrag.displayStart = pStart; newFrag.displayEnd = pEnd;
                                 newFrag.leftPct = idx * width; newFrag.widthPct = width;
                                 newFrag.group.visualSlices.push({ cIdx: colIdx, start: pStart, end: pEnd, left: newFrag.leftPct / 100, w: newFrag.widthPct / 100, dur: pEnd - pStart });
                                 slices.push(newFrag);
+
+
 
                                 // 更新位置缓存
                                 positionCache[frag.groupId] = {
@@ -1513,6 +1515,7 @@
                             // [Fix] 合并条件：
                             // 1. 同政权、相邻列、时间对齐
                             // 2. 边缘对齐：prev 必须占满右边缘，next 必须从左边缘开始
+                            // 3. [NEW] 不能是独占整列的情况（独占政权可能只是碰巧同名，不应合并）
                             let basicMatch = next.groupId === prev.groupId &&
                                 next.colIdx === (prev.startCol + prev.colspan) &&
                                 Math.abs(next.displayStart - prev.displayStart) < 0.1 &&
@@ -1523,7 +1526,13 @@
                             // next 必须从左边缘开始
                             let nextLeftEdge = next.leftPct <= 5;
 
-                            let isSame = basicMatch && prevRightEdge && nextLeftEdge;
+                            // [Fix] 禁止合并独占整列的情况
+                            // 如果prev或next独占整列（widthPct >= 95），不合并
+                            let prevIsFullWidth = prev.widthPct >= 95;
+                            let nextIsFullWidth = next.widthPct >= 95;
+                            let canMerge = !prevIsFullWidth && !nextIsFullWidth;
+
+                            let isSame = basicMatch && prevRightEdge && nextLeftEdge && canMerge;
                             if (isSame) {
                                 currentMerge.colspan++;
                                 // [Fix] 累加 next 的实际宽度
@@ -1584,6 +1593,7 @@
                         // [Fix] 所有色块使用统一的 z-index，不会互相覆盖
                         el.style.zIndex = 10;
                         el.__data__ = { group: slice.group, style: slice.style, fragment: slice };
+
                         el.onmouseenter = () => { if (!Core.state.focusedGroupId) { document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.add('group-hovered')); if (Core.state.features.connections) Core.render.drawConnections(slice.group, '#fff'); } };
                         el.onmouseleave = () => { if (!Core.state.focusedGroupId) { document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.remove('group-hovered')); document.getElementById('connections-layer').innerHTML = ''; } };
 

@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rcode 仿真系统 (全离线版)</title>
+    
+    <style>
+        body { background-color: #030712; color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; margin: 0; overflow: hidden; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #111; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
+        .code-font { font-size: 7.5px; line-height: 1.1; letter-spacing: -0.02em; }
+        
+        /* Loading Animation */
+        #loading { position: fixed; inset: 0; background: #030712; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .loader { width: 48px; height: 48px; border: 5px solid #1f2937; border-bottom-color: #3b82f6; border-radius: 50%; display: inline-block; box-sizing: border-box; animation: rotation 1s linear infinite; }
+        @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+
+    <!-- Tailwind CSS (样式引擎) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React 核心 (使用最稳定的 cdnjs) -->
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel 编译器 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+</head>
+<body>
+
+    <div id="loading">
+        <span class="loader"></span>
+        <p class="mt-4 text-gray-500 text-xs font-mono">正在初始化离线资源...</p>
+    </div>
+
+    <div id="root" class="h-screen flex flex-col"></div>
+
+    <script type="text/babel">
+        // 移除 Loading
+        setTimeout(() => { document.getElementById('loading').style.display = 'none'; }, 300);
+
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        // --- 核心：内嵌图标库 (SVG) ---
+        // 彻底解决图标不显示问题，不依赖外部 CDN
+        const IconBase = ({ children, className }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
+        );
+
+        const Icons = {
+            BrainCircuit: (p) => <IconBase {...p}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></IconBase>,
+            Play: (p) => <IconBase {...p}><polygon points="5 3 19 12 5 21 5 3"/></IconBase>,
+            Activity: (p) => <IconBase {...p}><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></IconBase>,
+            RefreshCw: (p) => <IconBase {...p}><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></IconBase>,
+            Settings: (p) => <IconBase {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></IconBase>,
+            History: (p) => <IconBase {...p}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></IconBase>,
+            Terminal: (p) => <IconBase {...p}><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></IconBase>,
+            X: (p) => <IconBase {...p}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></IconBase>,
+            ArrowRightLeft: (p) => <IconBase {...p}><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></IconBase>,
+            ListFilter: (p) => <IconBase {...p}><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></IconBase>,
+            Sparkles: (p) => <IconBase {...p}><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M9 3v4"/><path d="M3 5h4"/><path d="M3 9h4"/></IconBase>,
+            Download: (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></IconBase>,
+            Upload: (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></IconBase>,
+            ClipboardPaste: (p) => <IconBase {...p}><path d="M15 2H9a1 1 0 0 0-1 1v2c0 .6.4 1 1 1h6c.6 0 1-.4 1-1V3c0-.6-.4-1-1-1Z"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M16 4h2a2 2 0 0 1 2 2v2M11 14h10"/><path d="m17 10 4 4-4 4"/></IconBase>,
+            Plus: (p) => <IconBase {...p}><path d="M5 12h14"/><path d="M12 5v14"/></IconBase>
+        };
+
+        const Icon = ({ name, className }) => {
+            const Comp = Icons[name];
+            return Comp ? <Comp className={className} /> : <span className="text-xs">[?]</span>;
+        };
+
+        // --- 配置常量 ---
+        const DEFAULT_COLS = 47;
+        const DEFAULT_ROWS = 4096;
+        const ROW_MIN_OFFSET = -2070;
+        const RCODE_PREFIXES = ['C', 'Q', 'R', 'N', 'F', 'T'];
+
+        // --- 核心：数据生成器 (符合新分布要求) ---
+        const generateDefaultGrid = () => {
+            const rcodes = [];
+            RCODE_PREFIXES.forEach(char => {
+                for(let i=0; i<=9; i++) {
+                    for(let j=1; j<=7; j++) rcodes.push(`${char}${i}${j}00`);
+                }
+            });
+            const pool = rcodes.slice(0, 360);
+
+            const colStreams = Array(DEFAULT_COLS).fill(null).map(() => {
+                const data = new Array(DEFAULT_ROWS).fill(null);
+                const startRow = Math.floor(Math.random() * 800); 
+                
+                for(let r = 0; r < DEFAULT_ROWS; r++) {
+                    if (r < startRow) {
+                        data[r] = []; 
+                    } else {
+                        const rand = Math.random();
+                        let count = 1;
+                        if (rand > 0.97) count = 4;
+                        else if (rand > 0.90) count = 3;
+                        else if (rand > 0.60) count = 2;
+                        
+                        const cellItems = [];
+                        for(let k=0; k<count; k++) {
+                            const pickIdx = Math.floor(Math.random() * pool.length);
+                            const item = pool[pickIdx];
+                            if (!cellItems.includes(item)) {
+                                cellItems.push(item);
+                            } else {
+                                k--; 
+                            }
+                        }
+                        data[r] = cellItems;
+                    }
+                }
+                return data;
+            });
+
+            const rows = [];
+            for (let r = 0; r < DEFAULT_ROWS; r++) {
+                const row = [];
+                for (let c = 0; c < DEFAULT_COLS; c++) {
+                    row.push(colStreams[c][r] || []);
+                }
+                rows.push(row);
+            }
+            return rows;
+        };
+
+        // --- 主组件 ---
+        function RcodeOptimizerApp() {
+            const [grid, setGrid] = useState([]);
+            const [dimensions, setDimensions] = useState({ rows: 0, cols: 0 });
+            const [score, setScore] = useState(0);
+            const [bestScore, setBestScore] = useState(0);
+            const [algoState, setAlgoState] = useState('idle');
+            const [isDeepMode, setIsDeepMode] = useState(false);
+            const [enableTSP, setEnableTSP] = useState(false);
+            const [algoStats, setAlgoStats] = useState({ iteration: 0, temp: 0, stagnation: 0, logs: [], lastImprovement: 0 });
+            
+            const [rules, setRules] = useState([
+                "分布: 1个(60%), 2个(30%), 3个(7%), 4个(3%)",
+                "重力: 列开启后下方严禁留空",
+                "唯一性: 容器内 Rcode 不重复",
+                "TSP: 支持全局列重排优化"
+            ]);
+            const [newRuleInput, setNewRuleInput] = useState("");
+            const [aiProcessing, setAiProcessing] = useState(false);
+            
+            const [activePanel, setActivePanel] = useState(null); 
+            const [settingsTab, setSettingsTab] = useState('algo');
+            const [rowLabelOffset, setRowLabelOffset] = useState(ROW_MIN_OFFSET);
+            const [pasteContent, setPasteContent] = useState("");
+            
+            const headerRef = useRef(null);
+            const sidebarRef = useRef(null);
+            const bodyRef = useRef(null);
+            const stopRef = useRef(false);
+            const fileInputRef = useRef(null);
+
+            const [scrollTop, setScrollTop] = useState(0);
+            const [viewportHeight, setViewportHeight] = useState(600);
+            const rowHeight = 40;
+            const colWidth = 90;
+
+            useEffect(() => {
+                const data = generateDefaultGrid();
+                loadGrid(data, ROW_MIN_OFFSET);
+                const updateH = () => bodyRef.current && setViewportHeight(bodyRef.current.clientHeight);
+                window.addEventListener('resize', updateH);
+                setTimeout(updateH, 100); 
+                return () => window.removeEventListener('resize', updateH);
+            }, []);
+
+            const loadGrid = (data, offset = 0) => {
+                if(!data || data.length === 0) return;
+                const r = data.length;
+                const c = data[0].length;
+                setGrid(data);
+                setDimensions({ rows: r, cols: c });
+                setRowLabelOffset(offset);
+                const s = calculateScore(data);
+                setScore(s);
+                setBestScore(s);
+                addLog(`就绪: ${r}行 x ${c}列`);
+            };
+
+            const calculateScore = (currentGrid) => {
+                let pts = 0;
+                const R = currentGrid.length;
+                const C = currentGrid[0].length;
+                for (let r = 0; r < R; r++) {
+                    for (let c = 0; c < C - 1; c++) {
+                        const cellA = currentGrid[r][c];
+                        const cellB = currentGrid[r][c+1];
+                        if (cellA.length > 0 && cellB.length > 0) {
+                            if (cellA[cellA.length - 1] === cellB[0]) pts++;
+                        }
+                    }
+                }
+                return pts;
+            };
+
+            // --- TSP 引擎 ---
+            const optimizeColumns = (currentGrid) => {
+                const R = currentGrid.length;
+                const C = currentGrid[0].length;
+                addLog(`启动 TSP 引擎: 分析列相似度...`);
+
+                const cols = Array(C).fill(null).map((_, cIdx) => currentGrid.map(row => row[cIdx]));
+
+                const getSimilarity = (colA, colB) => {
+                    let sim = 0;
+                    for(let r=0; r<R; r+=10) { 
+                        const setA = colA[r];
+                        const setB = colB[r];
+                        if (setA.length > 0 && setB.length > 0) {
+                            for(let k=0; k<setA.length; k++) {
+                                if(setB.includes(setA[k])) {
+                                    sim++;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    return sim;
+                };
+
+                const visited = new Set();
+                const newOrder = [];
+                let currentIdx = 0;
+                visited.add(currentIdx);
+                newOrder.push(cols[currentIdx]);
+                
+                while(newOrder.length < C) {
+                    let bestNextIdx = -1;
+                    let maxSim = -1;
+                    
+                    for(let i=0; i<C; i++) {
+                        if(!visited.has(i)) {
+                            const sim = getSimilarity(cols[currentIdx], cols[i]);
+                            if(sim > maxSim) {
+                                maxSim = sim;
+                                bestNextIdx = i;
+                            }
+                        }
+                    }
+                    
+                    if (bestNextIdx !== -1) {
+                        visited.add(bestNextIdx);
+                        newOrder.push(cols[bestNextIdx]);
+                        currentIdx = bestNextIdx;
+                    } else {
+                        for(let i=0; i<C; i++) {
+                            if(!visited.has(i)) {
+                                visited.add(i);
+                                newOrder.push(cols[i]);
+                                currentIdx = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                addLog(`TSP 完成: 布局已重构`);
+                const newGrid = [];
+                for(let r=0; r<R; r++) {
+                    const newRow = [];
+                    for(let c=0; c<C; c++) {
+                        newRow.push(newOrder[c][r]);
+                    }
+                    newGrid.push(newRow);
+                }
+                return newGrid;
+            };
+
+            // --- 模拟退火 ---
+            const runOptimization = async () => {
+                if (algoState === 'running') return;
+                setAlgoState('running');
+                setActivePanel('console'); 
+                stopRef.current = false;
+
+                let currentGrid = grid.map(row => row.map(cell => [...cell]));
+                
+                if (enableTSP) {
+                    await new Promise(r => setTimeout(r, 10)); 
+                    currentGrid = optimizeColumns(currentGrid);
+                    setGrid(currentGrid); 
+                    await new Promise(r => setTimeout(r, 500)); 
+                }
+
+                let currentScore = calculateScore(currentGrid);
+                let bestGridFound = currentGrid.map(row => row.map(cell => [...cell]));
+                let maxScore = currentScore;
+
+                const INITIAL_TEMP = 100.0;
+                const COOLING = isDeepMode ? 0.9995 : 0.985; 
+                const MIN_TEMP = 0.05;
+                const BATCH_SIZE = isDeepMode ? 3000 : 800; 
+                const CONVERGENCE_LIMIT = isDeepMode ? 8000000 : 200000; 
+
+                let temp = INITIAL_TEMP;
+                let iter = 0;
+                let stagnationCounter = 0;
+                let lastImprovementIter = 0;
+                const R = dimensions.rows;
+                const C = dimensions.cols;
+
+                const mutablePoints = [];
+                for(let r=0; r<R; r++) {
+                    for(let c=0; c<C; c++) {
+                        if(currentGrid[r][c].length > 1) {
+                            if(r === 0 || currentGrid[r][c].length !== currentGrid[r-1][c].length) {
+                                mutablePoints.push({r, c});
+                            }
+                        }
+                    }
+                }
+
+                addLog(`SA 启动 | 模式: ${isDeepMode?'深度':'标准'} | TSP: ${enableTSP?'ON':'OFF'}`);
+
+                const step = () => {
+                    if (stopRef.current || temp < MIN_TEMP || stagnationCounter > CONVERGENCE_LIMIT) {
+                        setGrid(bestGridFound);
+                        setScore(maxScore);
+                        setBestScore(maxScore);
+                        setAlgoState('finished');
+                        addLog(`结束 | 最终分: ${maxScore}`);
+                        return;
+                    }
+
+                    for(let i=0; i<BATCH_SIZE; i++) {
+                        iter++;
+                        if(mutablePoints.length === 0) break;
+                        const pt = mutablePoints[Math.floor(Math.random() * mutablePoints.length)];
+                        const cell = currentGrid[pt.r][pt.c];
+                        
+                        const idx1 = Math.floor(Math.random() * cell.length);
+                        const idx2 = Math.floor(Math.random() * cell.length);
+                        if (idx1 === idx2) { stagnationCounter++; continue; }
+
+                        let rEnd = pt.r;
+                        while(rEnd + 1 < R && currentGrid[rEnd+1][pt.c].length === cell.length) {
+                            rEnd++;
+                        }
+
+                        const v1 = cell[idx1];
+                        const v2 = cell[idx2];
+
+                        for(let r=pt.r; r<=rEnd; r++) {
+                            currentGrid[r][pt.c][idx1] = v2;
+                            currentGrid[r][pt.c][idx2] = v1;
+                        }
+
+                        const newScore = calculateScore(currentGrid);
+                        const delta = newScore - currentScore;
+
+                        if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                            currentScore = newScore;
+                            if (currentScore > maxScore) {
+                                maxScore = currentScore;
+                                bestGridFound = currentGrid.map(row => row.map(c => [...c]));
+                                stagnationCounter = 0; 
+                                lastImprovementIter = iter;
+                            } else {
+                                stagnationCounter++;
+                            }
+                        } else {
+                            for(let r=pt.r; r<=rEnd; r++) {
+                                currentGrid[r][pt.c][idx1] = v1;
+                                currentGrid[r][pt.c][idx2] = v2;
+                            }
+                            stagnationCounter++;
+                        }
+                    }
+
+                    temp *= COOLING;
+
+                    setAlgoStats(prev => ({
+                        iteration: iter,
+                        temp: temp,
+                        stagnation: stagnationCounter,
+                        lastImprovement: lastImprovementIter,
+                        logs: iter % (isDeepMode ? 5000 : 2000) === 0 
+                            ? [...prev.logs, `Iter ${(iter/1000).toFixed(0)}k: Temp ${temp.toFixed(1)} | Best ${maxScore}`].slice(-6) 
+                            : prev.logs
+                    }));
+
+                    if (iter % (BATCH_SIZE * 20) === 0) {
+                        setScore(currentScore);
+                        setBestScore(maxScore);
+                        setGrid([...currentGrid]); 
+                    }
+
+                    requestAnimationFrame(step);
+                };
+                requestAnimationFrame(step);
+            };
+
+            const handleBodyScroll = (e) => {
+                const { scrollTop: st, scrollLeft: sl } = e.target;
+                setScrollTop(st);
+                if (headerRef.current) headerRef.current.scrollLeft = sl;
+                if (sidebarRef.current) sidebarRef.current.scrollTop = st;
+            };
+
+            const handleAddRule = () => {
+                if (!newRuleInput.trim()) return;
+                setAiProcessing(true);
+                setTimeout(() => {
+                    setRules(prev => [...prev, newRuleInput]);
+                    setNewRuleInput("");
+                    setAiProcessing(false);
+                    addLog(`AI: 已注入规则 "${newRuleInput}"`);
+                }, 1000);
+            };
+
+            const processImportContent = (content) => {
+                try {
+                    const json = JSON.parse(content);
+                    if (Array.isArray(json.grid)) {
+                        loadGrid(json.grid, json.offset || ROW_MIN_OFFSET);
+                        setRules(json.rules || rules);
+                        setActivePanel(null);
+                        alert("导入成功！");
+                        setPasteContent("");
+                    } else {
+                        alert("缺少 grid 字段");
+                    }
+                } catch (err) { alert("JSON 格式错误"); }
+            };
+
+            const handleImport = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => processImportContent(e.target.result);
+                reader.readAsText(file);
+            };
+
+            const handleExport = () => {
+                const json = JSON.stringify({ grid, score, rules, offset: rowLabelOffset }, null, 2);
+                const blob = new Blob([json], {type: "application/json"});
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = `rcode_export_${score}.json`;
+                link.click();
+            };
+
+            const addLog = (msg) => setAlgoStats(p => ({...p, logs: [...p.logs, msg].slice(-6)}));
+
+            const startIndex = Math.floor(scrollTop / rowHeight);
+            const endIndex = Math.min(dimensions.rows - 1, startIndex + Math.ceil(viewportHeight / rowHeight) + 2);
+            const visibleRows = [];
+            if (grid.length > 0) {
+                for(let i=startIndex; i<=endIndex; i++) visibleRows.push({ idx: i, label: rowLabelOffset + i, data: grid[i] });
+            }
+
+            return (
+                <div className="flex flex-col h-full bg-gray-950 text-gray-100 font-sans">
+                    <header className="flex-none bg-gray-900 border-b border-gray-800 p-2 flex items-center justify-between z-50 shadow-lg">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-gradient-to-br from-indigo-600 to-purple-600 p-1.5 rounded-lg">
+                                <Icon name="BrainCircuit" className="w-5 h-5 text-white" />
+                            </div>
+                            <div>
+                                <h1 className="text-sm font-bold text-gray-100">Rcode 仿真系统</h1>
+                                <div className="text-[10px] text-gray-400 flex gap-2">
+                                    <span>{dimensions.rows} x {dimensions.cols}</span>
+                                    <span className="text-gray-600">|</span>
+                                    <span className={isDeepMode ? "text-purple-400 font-bold" : "text-gray-400"}>{isDeepMode ? '深度模式' : '标准模式'}</span>
+                                    <span className="text-gray-600">|</span>
+                                    <span className={enableTSP ? "text-blue-400 font-bold" : "text-gray-500"}>TSP:{enableTSP ? 'ON' : 'OFF'}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="text-right pr-2">
+                            <div className="text-[10px] text-gray-500 uppercase tracking-wider">最佳积分</div>
+                            <div className="text-xl font-mono font-bold text-green-400 leading-none">{bestScore}</div>
+                        </div>
+                    </header>
+
+                    <div className="flex-1 relative overflow-hidden flex flex-col">
+                        <div className="flex-none flex relative z-30 bg-gray-900 border-b border-gray-800">
+                            <div style={{ width: '60px', minWidth: '60px' }} className="bg-gray-800 border-r border-gray-700 flex items-center justify-center text-[10px] text-gray-500 font-mono">IDX</div>
+                            <div ref={headerRef} className="flex-1 overflow-hidden">
+                                <div className="flex" style={{ width: `${dimensions.cols * colWidth}px` }}>
+                                    {Array.from({length: dimensions.cols}).map((_, i) => (
+                                        <div key={i} style={{ width: `${colWidth}px` }} className="flex-shrink-0 h-8 flex items-center justify-center text-[10px] text-gray-400 font-mono border-r border-gray-800/50 bg-gray-900">W{i+1}</div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 flex relative overflow-hidden">
+                            <div ref={sidebarRef} className="flex-none overflow-hidden bg-gray-900 border-r border-gray-800 z-20 relative shadow-xl" style={{ width: '60px' }}>
+                                <div style={{ height: `${dimensions.rows * rowHeight}px`, position: 'relative' }}>
+                                    {visibleRows.map(({ idx, label }) => (
+                                        <div key={idx} style={{ position: 'absolute', top: `${idx * rowHeight}px`, height: `${rowHeight}px`, width: '100%' }} className="flex items-center justify-center text-[10px] text-gray-500 font-mono border-b border-gray-800/30">
+                                            {label}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div ref={bodyRef} className="flex-1 overflow-auto custom-scrollbar bg-black" onScroll={handleBodyScroll}>
+                                <div style={{ height: `${dimensions.rows * rowHeight}px`, width: `${dimensions.cols * colWidth}px`, position: 'relative' }}>
+                                    {visibleRows.map(({ idx, data }) => (
+                                        <div key={idx} style={{ position: 'absolute', top: `${idx * rowHeight}px`, height: `${rowHeight}px`, width: '100%' }} className="flex border-b border-gray-800/20 hover:bg-white/5 transition-colors">
+                                            {data.map((cell, cIdx) => (
+                                                <div key={cIdx} style={{ width: `${colWidth}px` }} className="flex-shrink-0 flex items-center px-0.5 gap-0.5 border-r border-gray-800/20 overflow-hidden relative">
+                                                    {cell.length === 0 && <div className="w-full h-[1px] bg-gray-800/30"></div>}
+                                                    {cell.map((item, itemIdx) => (
+                                                        <div key={itemIdx} className={`flex-1 h-6 min-w-[14px] rounded-[2px] code-font font-mono tracking-tighter flex items-center justify-center whitespace-nowrap overflow-hidden transition-colors duration-300 ${algoState === 'running' ? 'bg-purple-900/30 border border-purple-500/30 text-purple-200' : 'bg-indigo-900/20 border border-indigo-500/20 text-indigo-400'}`} title={item}>
+                                                            {item}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {activePanel === 'console' && (
+                            <div className="h-48 bg-gray-900 border-t border-gray-700 flex flex-col z-50 animate-in slide-in-from-bottom shadow-[0_-5px_15px_rgba(0,0,0,0.5)] absolute bottom-14 left-0 right-0">
+                                <div className="flex justify-between items-center px-3 py-1 bg-black/20 border-b border-gray-800">
+                                    <div className="flex gap-4 items-center">
+                                        <span className="text-xs font-bold text-green-400 flex items-center gap-1"><Icon name="Terminal" className="w-3 h-3"/> 核心日志</span>
+                                        <div className="flex items-center gap-3 text-[10px] text-gray-500 font-mono">
+                                            <span>{(algoStats.iteration / 1000).toFixed(1)}k</span>
+                                            <span className={algoStats.stagnation > 50000 ? "text-red-500" : "text-blue-400"}>Stag:{algoStats.stagnation}</span>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setActivePanel(null)}><Icon name="X" className="w-4 h-4 text-gray-500 hover:text-white"/></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-2 font-mono text-[10px] space-y-1">
+                                    {algoStats.logs.length === 0 && <div className="text-gray-600 italic">暂无记录...</div>}
+                                    {algoStats.logs.map((l, i) => <div key={i} className="text-gray-400 border-b border-gray-800/50 pb-0.5">{`> ${l}`}</div>)}
+                                </div>
+                                <div className="grid grid-cols-2 h-6 border-t border-gray-800 bg-black text-[9px]">
+                                    <div className="flex items-center px-2 gap-2 text-gray-500 border-r border-gray-800">
+                                        <span>上次提升:</span><span className="text-white">{(algoStats.lastImprovement / 1000).toFixed(1)}k</span>
+                                    </div>
+                                    <div className="flex items-center px-2 relative overflow-hidden">
+                                        <span className="text-gray-500 z-10 relative mr-2">算法进度</span>
+                                        <div className="absolute left-0 top-0 bottom-0 bg-purple-900/40 transition-all duration-300" style={{ width: `${Math.max(0, 100 - algoStats.temp)}%` }}></div>
+                                        <span className="z-10 relative text-purple-300">{(100 - algoStats.temp).toFixed(1)}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex-none bg-gray-900 border-t border-gray-800 p-2 pb-safe grid grid-cols-5 gap-2 z-50">
+                        <button onClick={() => setActivePanel(activePanel === 'settings' ? null : 'settings')} className={`flex flex-col items-center justify-center rounded-lg active:scale-95 transition ${activePanel === 'settings' ? 'bg-gray-700 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400'}`}>
+                            <Icon name="Settings" className="w-4 h-4 mb-0.5" /><span className="text-[9px]">配置</span>
+                        </button>
+                        <button onClick={() => setActivePanel(activePanel === 'console' ? null : 'console')} className={`flex flex-col items-center justify-center rounded-lg active:scale-95 transition ${activePanel === 'console' ? 'bg-gray-700 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400'}`}>
+                            <Icon name="History" className="w-4 h-4 mb-0.5" /><span className="text-[9px]">记录</span>
+                        </button>
+                        <button onClick={() => loadGrid(generateDefaultGrid(), ROW_MIN_OFFSET)} disabled={algoState === 'running'} className="flex flex-col items-center justify-center rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 active:scale-95 transition disabled:opacity-30">
+                            <Icon name="RefreshCw" className={`w-4 h-4 mb-0.5 ${algoState === 'generating' ? 'animate-spin' : ''}`} /><span className="text-[9px]">重置</span>
+                        </button>
+                        <button onClick={() => { if (algoState === 'running') stopRef.current = true; else runOptimization(); }} disabled={grid.length === 0} className={`col-span-2 flex items-center justify-center gap-2 rounded-lg text-white shadow-lg active:scale-95 transition-all ${algoState === 'running' ? 'bg-red-900/80 border border-red-600 animate-pulse' : isDeepMode ? 'bg-gradient-to-r from-purple-700 to-pink-600' : 'bg-gradient-to-r from-blue-600 to-indigo-600'}`}>
+                            {algoState === 'running' ? <Icon name="Activity" className="w-5 h-5" /> : <Icon name="Play" className="w-5 h-5 ml-1" />}
+                            <div className="flex flex-col items-start leading-none">
+                                <span className="text-xs font-bold">{algoState === 'running' ? '停止' : '运算'}</span>
+                                <span className="text-[9px] opacity-80">{enableTSP ? 'TSP+SA' : (isDeepMode ? '深度模式' : '标准模式')}</span>
+                            </div>
+                        </button>
+                    </div>
+
+                    {activePanel === 'settings' && (
+                        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                            <div className="w-full max-w-sm bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+                                <div className="flex justify-between items-center p-3 border-b border-gray-800 bg-gray-800/50">
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setSettingsTab('algo')} className={`px-3 py-1 text-xs font-bold rounded ${settingsTab === 'algo' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>模式与导入</button>
+                                        <button onClick={() => setSettingsTab('rules')} className={`px-3 py-1 text-xs font-bold rounded ${settingsTab === 'rules' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>规则AI</button>
+                                    </div>
+                                    <button onClick={() => setActivePanel(null)}><Icon name="X" className="w-5 h-5 text-gray-400"/></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                                    {settingsTab === 'rules' && (
+                                        <div className="space-y-4">
+                                            <div>
+                                                <h3 className="text-xs text-gray-500 font-bold uppercase mb-2 flex items-center gap-1"><Icon name="ListFilter" className="w-3 h-3"/> 当前规则</h3>
+                                                <ul className="space-y-2">
+                                                    {rules.map((r, i) => (
+                                                        <li key={i} className="text-xs text-gray-300 bg-gray-800/50 p-2 rounded border border-gray-700/50 flex gap-2">
+                                                            <div className="min-w-[3px] bg-blue-500 rounded-full h-full"></div>{r}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                            <div>
+                                                <h3 className="text-xs text-gray-500 font-bold uppercase mb-2 flex items-center gap-1"><Icon name="Sparkles" className="w-3 h-3 text-purple-400"/> AI 注入</h3>
+                                                <div className="relative">
+                                                    <textarea value={newRuleInput} onChange={(e) => setNewRuleInput(e.target.value)} placeholder="输入规则..." className="w-full h-20 bg-black border border-gray-700 rounded p-2 text-xs text-white focus:border-purple-500 focus:outline-none"/>
+                                                    <button onClick={handleAddRule} disabled={aiProcessing || !newRuleInput.trim()} className="absolute bottom-2 right-2 bg-purple-600 hover:bg-purple-500 text-white p-1.5 rounded disabled:opacity-50">
+                                                        {aiProcessing ? <Icon name="RefreshCw" className="w-3 h-3 animate-spin"/> : <Icon name="Plus" className="w-3 h-3"/>}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {settingsTab === 'algo' && (
+                                        <div className="space-y-6">
+                                            <div>
+                                                <label className="text-xs text-gray-500 font-bold uppercase mb-2 block">运算精度</label>
+                                                <div className="flex bg-black rounded-lg p-1 border border-gray-700">
+                                                    <button onClick={() => setIsDeepMode(false)} className={`flex-1 py-2 text-xs rounded transition-all ${!isDeepMode ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>标准 (快)</button>
+                                                    <button onClick={() => setIsDeepMode(true)} className={`flex-1 py-2 text-xs rounded transition-all ${isDeepMode ? 'bg-purple-600 text-white' : 'text-gray-500'}`}>深度 (准)</button>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs text-gray-500 font-bold uppercase mb-2 block">高级优化</label>
+                                                <div onClick={() => setEnableTSP(!enableTSP)} className={`flex items-center justify-between p-3 rounded border cursor-pointer transition-all ${enableTSP ? 'bg-blue-900/30 border-blue-500' : 'bg-gray-800 border-gray-700'}`}>
+                                                    <div className="flex items-center gap-2">
+                                                        <Icon name="ArrowRightLeft" className={`w-4 h-4 ${enableTSP ? 'text-blue-400' : 'text-gray-500'}`} />
+                                                        <div>
+                                                            <div className={`text-xs font-bold ${enableTSP ? 'text-blue-300' : 'text-gray-400'}`}>启用 TSP 列重排</div>
+                                                            <div className="text-[9px] text-gray-500">允许交换列顺序以寻找全局最优解</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className={`w-8 h-4 rounded-full p-0.5 transition-colors ${enableTSP ? 'bg-blue-500' : 'bg-gray-600'}`}>
+                                                        <div className={`w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${enableTSP ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs text-gray-500 font-bold uppercase mb-2 block">导入/导出</label>
+                                                <div className="flex flex-col gap-3">
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        <button onClick={handleExport} className="flex flex-col items-center justify-center p-3 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700">
+                                                            <Icon name="Download" className="w-4 h-4 text-green-400 mb-1"/><span className="text-xs">导出JSON</span>
+                                                        </button>
+                                                        <button onClick={() => fileInputRef.current.click()} className="flex flex-col items-center justify-center p-3 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700">
+                                                            <Icon name="Upload" className="w-4 h-4 text-blue-400 mb-1"/><span className="text-xs">选择文件</span>
+                                                        </button>
+                                                        <input type="file" ref={fileInputRef} onChange={handleImport} className="hidden" accept=".json, .txt, text/plain, application/json"/>
+                                                    </div>
+                                                    <div className="border-t border-gray-700 pt-3">
+                                                        <label className="text-[10px] text-gray-400 mb-1 flex items-center gap-1"><Icon name="ClipboardPaste" className="w-3 h-3"/> 粘贴文本导入</label>
+                                                        <div className="flex gap-2">
+                                                            <textarea value={pasteContent} onChange={(e) => setPasteContent(e.target.value)} placeholder="粘贴JSON..." className="flex-1 h-12 bg-black border border-gray-700 rounded p-2 text-[10px] text-gray-300 focus:outline-none focus:border-blue-500"/>
+                                                            <button onClick={() => processImportContent(pasteContent)} disabled={!pasteContent.trim()} className="w-16 bg-blue-700 hover:bg-blue-600 text-white rounded text-xs disabled:opacity-50">导入</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<RcodeOptimizerApp />);
+    </script>
+</body>
+</html>
