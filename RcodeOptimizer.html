@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Rcode 仿真系统 (全离线版)</title>
+    <title>Rcode 仿真系统 (最终修复版)</title>
     
     <style>
         body { background-color: #030712; color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; margin: 0; overflow: hidden; }
@@ -19,37 +19,29 @@
         @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 
-    <!-- Tailwind CSS (样式引擎) -->
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- React 核心 (使用最稳定的 cdnjs) -->
     <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
     <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel 编译器 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 </head>
 <body>
 
     <div id="loading">
         <span class="loader"></span>
-        <p class="mt-4 text-gray-500 text-xs font-mono">正在初始化离线资源...</p>
+        <p class="mt-4 text-gray-500 text-xs font-mono">正在初始化...</p>
     </div>
 
     <div id="root" class="h-screen flex flex-col"></div>
 
     <script type="text/babel">
-        // 移除 Loading
         setTimeout(() => { document.getElementById('loading').style.display = 'none'; }, 300);
 
         const { useState, useEffect, useCallback, useRef } = React;
 
-        // --- 核心：内嵌图标库 (SVG) ---
-        // 彻底解决图标不显示问题，不依赖外部 CDN
+        // --- 内嵌图标 ---
         const IconBase = ({ children, className }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
         );
-
         const Icons = {
             BrainCircuit: (p) => <IconBase {...p}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></IconBase>,
             Play: (p) => <IconBase {...p}><polygon points="5 3 19 12 5 21 5 3"/></IconBase>,
@@ -67,72 +59,57 @@
             ClipboardPaste: (p) => <IconBase {...p}><path d="M15 2H9a1 1 0 0 0-1 1v2c0 .6.4 1 1 1h6c.6 0 1-.4 1-1V3c0-.6-.4-1-1-1Z"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M16 4h2a2 2 0 0 1 2 2v2M11 14h10"/><path d="m17 10 4 4-4 4"/></IconBase>,
             Plus: (p) => <IconBase {...p}><path d="M5 12h14"/><path d="M12 5v14"/></IconBase>
         };
+        const Icon = ({ name, className }) => { const Comp = Icons[name]; return Comp ? <Comp className={className} /> : null; };
 
-        const Icon = ({ name, className }) => {
-            const Comp = Icons[name];
-            return Comp ? <Comp className={className} /> : <span className="text-xs">[?]</span>;
-        };
-
-        // --- 配置常量 ---
+        // --- Config ---
         const DEFAULT_COLS = 47;
         const DEFAULT_ROWS = 4096;
         const ROW_MIN_OFFSET = -2070;
         const RCODE_PREFIXES = ['C', 'Q', 'R', 'N', 'F', 'T'];
 
-        // --- 核心：数据生成器 (符合新分布要求) ---
+        // --- Data Generator ---
         const generateDefaultGrid = () => {
             const rcodes = [];
             RCODE_PREFIXES.forEach(char => {
-                for(let i=0; i<=9; i++) {
-                    for(let j=1; j<=7; j++) rcodes.push(`${char}${i}${j}00`);
-                }
+                for(let i=0; i<=9; i++) { for(let j=1; j<=7; j++) rcodes.push(`${char}${i}${j}00`); }
             });
             const pool = rcodes.slice(0, 360);
-
             const colStreams = Array(DEFAULT_COLS).fill(null).map(() => {
                 const data = new Array(DEFAULT_ROWS).fill(null);
                 const startRow = Math.floor(Math.random() * 800); 
-                
                 for(let r = 0; r < DEFAULT_ROWS; r++) {
-                    if (r < startRow) {
-                        data[r] = []; 
-                    } else {
+                    if (r < startRow) { data[r] = []; } else {
                         const rand = Math.random();
                         let count = 1;
                         if (rand > 0.97) count = 4;
                         else if (rand > 0.90) count = 3;
                         else if (rand > 0.60) count = 2;
-                        
                         const cellItems = [];
                         for(let k=0; k<count; k++) {
                             const pickIdx = Math.floor(Math.random() * pool.length);
                             const item = pool[pickIdx];
-                            if (!cellItems.includes(item)) {
-                                cellItems.push(item);
-                            } else {
-                                k--; 
-                            }
+                            if (!cellItems.includes(item)) cellItems.push(item);
+                            else k--; 
                         }
                         data[r] = cellItems;
                     }
                 }
                 return data;
             });
-
             const rows = [];
             for (let r = 0; r < DEFAULT_ROWS; r++) {
                 const row = [];
-                for (let c = 0; c < DEFAULT_COLS; c++) {
-                    row.push(colStreams[c][r] || []);
-                }
+                for (let c = 0; c < DEFAULT_COLS; c++) { row.push(colStreams[c][r] || []); }
                 rows.push(row);
             }
             return rows;
         };
 
-        // --- 主组件 ---
+        // --- Main App ---
         function RcodeOptimizerApp() {
             const [grid, setGrid] = useState([]);
+            // 新增: colOrder 状态，用于跟踪列的顺序 (初始为 0, 1, 2... 46)
+            const [colOrder, setColOrder] = useState([]); 
             const [dimensions, setDimensions] = useState({ rows: 0, cols: 0 });
             const [score, setScore] = useState(0);
             const [bestScore, setBestScore] = useState(0);
@@ -140,16 +117,9 @@
             const [isDeepMode, setIsDeepMode] = useState(false);
             const [enableTSP, setEnableTSP] = useState(false);
             const [algoStats, setAlgoStats] = useState({ iteration: 0, temp: 0, stagnation: 0, logs: [], lastImprovement: 0 });
-            
-            const [rules, setRules] = useState([
-                "分布: 1个(60%), 2个(30%), 3个(7%), 4个(3%)",
-                "重力: 列开启后下方严禁留空",
-                "唯一性: 容器内 Rcode 不重复",
-                "TSP: 支持全局列重排优化"
-            ]);
+            const [rules, setRules] = useState(["分布: 1个(60%), 2个(30%), 3个(7%), 4个(3%)", "重力: 列开启后下方严禁留空", "唯一性: 容器内 Rcode 不重复", "TSP: 支持全局列重排优化"]);
             const [newRuleInput, setNewRuleInput] = useState("");
             const [aiProcessing, setAiProcessing] = useState(false);
-            
             const [activePanel, setActivePanel] = useState(null); 
             const [settingsTab, setSettingsTab] = useState('algo');
             const [rowLabelOffset, setRowLabelOffset] = useState(ROW_MIN_OFFSET);
@@ -163,12 +133,14 @@
 
             const [scrollTop, setScrollTop] = useState(0);
             const [viewportHeight, setViewportHeight] = useState(600);
-            const rowHeight = 40;
+            const rowHeight = 18; // 压缩后的行高
             const colWidth = 90;
 
             useEffect(() => {
+                // *** 修复点：恢复了初始化逻辑 ***
                 const data = generateDefaultGrid();
                 loadGrid(data, ROW_MIN_OFFSET);
+                
                 const updateH = () => bodyRef.current && setViewportHeight(bodyRef.current.clientHeight);
                 window.addEventListener('resize', updateH);
                 setTimeout(updateH, 100); 
@@ -181,6 +153,8 @@
                 const c = data[0].length;
                 setGrid(data);
                 setDimensions({ rows: r, cols: c });
+                // 重置列序
+                setColOrder(Array.from({length: c}, (_, i) => i));
                 setRowLabelOffset(offset);
                 const s = calculateScore(data);
                 setScore(s);
@@ -204,17 +178,20 @@
                 return pts;
             };
 
-            // --- TSP 引擎 ---
-            const optimizeColumns = (currentGrid) => {
+            // --- TSP 引擎 (增强版) ---
+            const optimizeColumns = (currentGrid, currentOrder) => {
                 const R = currentGrid.length;
                 const C = currentGrid[0].length;
-                addLog(`启动 TSP 引擎: 分析列相似度...`);
+                addLog(`TSP 启动: 正在全量扫描 ${C} 列亲密度...`);
 
                 const cols = Array(C).fill(null).map((_, cIdx) => currentGrid.map(row => row[cIdx]));
+                const headers = [...currentOrder]; // 对应的表头索引
 
+                // 相似度计算 (全量扫描，不偷懒)
                 const getSimilarity = (colA, colB) => {
                     let sim = 0;
-                    for(let r=0; r<R; r+=10) { 
+                    // 对于历史数据，不能跳行，必须逐行检查
+                    for(let r=0; r<R; r++) { 
                         const setA = colA[r];
                         const setB = colB[r];
                         if (setA.length > 0 && setB.length > 0) {
@@ -230,12 +207,15 @@
                 };
 
                 const visited = new Set();
-                const newOrder = [];
-                let currentIdx = 0;
-                visited.add(currentIdx);
-                newOrder.push(cols[currentIdx]);
+                const newGridCols = [];
+                const newHeaderOrder = [];
                 
-                while(newOrder.length < C) {
+                let currentIdx = 0; // 从第一列开始
+                visited.add(currentIdx);
+                newGridCols.push(cols[currentIdx]);
+                newHeaderOrder.push(headers[currentIdx]);
+                
+                while(newGridCols.length < C) {
                     let bestNextIdx = -1;
                     let maxSim = -1;
                     
@@ -251,13 +231,16 @@
                     
                     if (bestNextIdx !== -1) {
                         visited.add(bestNextIdx);
-                        newOrder.push(cols[bestNextIdx]);
+                        newGridCols.push(cols[bestNextIdx]);
+                        newHeaderOrder.push(headers[bestNextIdx]);
                         currentIdx = bestNextIdx;
                     } else {
+                        // 孤岛，找一个未访问的
                         for(let i=0; i<C; i++) {
                             if(!visited.has(i)) {
                                 visited.add(i);
-                                newOrder.push(cols[i]);
+                                newGridCols.push(cols[i]);
+                                newHeaderOrder.push(headers[i]);
                                 currentIdx = i;
                                 break;
                             }
@@ -265,19 +248,21 @@
                     }
                 }
 
-                addLog(`TSP 完成: 布局已重构`);
+                addLog(`TSP 完成: 布局已重排`);
+                
+                // 重建行优先网格
                 const newGrid = [];
                 for(let r=0; r<R; r++) {
                     const newRow = [];
                     for(let c=0; c<C; c++) {
-                        newRow.push(newOrder[c][r]);
+                        newRow.push(newGridCols[c][r]);
                     }
                     newGrid.push(newRow);
                 }
-                return newGrid;
+                
+                return { grid: newGrid, order: newHeaderOrder };
             };
 
-            // --- 模拟退火 ---
             const runOptimization = async () => {
                 if (algoState === 'running') return;
                 setAlgoState('running');
@@ -285,12 +270,19 @@
                 stopRef.current = false;
 
                 let currentGrid = grid.map(row => row.map(cell => [...cell]));
+                let currentOrder = [...colOrder];
                 
                 if (enableTSP) {
                     await new Promise(r => setTimeout(r, 10)); 
-                    currentGrid = optimizeColumns(currentGrid);
+                    // 获取新的 Grid 和 新的 Order
+                    const result = optimizeColumns(currentGrid, currentOrder);
+                    currentGrid = result.grid;
+                    currentOrder = result.order;
+                    
                     setGrid(currentGrid); 
-                    await new Promise(r => setTimeout(r, 500)); 
+                    setColOrder(currentOrder); // 更新表头显示
+                    
+                    await new Promise(r => setTimeout(r, 800)); // 暂停 0.8s 让你看清变化
                 }
 
                 let currentScore = calculateScore(currentGrid);
@@ -489,8 +481,10 @@
                             <div style={{ width: '60px', minWidth: '60px' }} className="bg-gray-800 border-r border-gray-700 flex items-center justify-center text-[10px] text-gray-500 font-mono">IDX</div>
                             <div ref={headerRef} className="flex-1 overflow-hidden">
                                 <div className="flex" style={{ width: `${dimensions.cols * colWidth}px` }}>
-                                    {Array.from({length: dimensions.cols}).map((_, i) => (
-                                        <div key={i} style={{ width: `${colWidth}px` }} className="flex-shrink-0 h-8 flex items-center justify-center text-[10px] text-gray-400 font-mono border-r border-gray-800/50 bg-gray-900">W{i+1}</div>
+                                    {colOrder.map((origIdx, i) => (
+                                        <div key={i} style={{ width: `${colWidth}px` }} className={`flex-shrink-0 h-8 flex items-center justify-center text-[10px] font-mono border-r border-gray-800/50 ${enableTSP ? 'bg-blue-900/20 text-blue-300' : 'bg-gray-900 text-gray-400'}`}>
+                                            W{origIdx + 1}
+                                        </div>
                                     ))}
                                 </div>
                             </div>
@@ -515,7 +509,7 @@
                                                 <div key={cIdx} style={{ width: `${colWidth}px` }} className="flex-shrink-0 flex items-center px-0.5 gap-0.5 border-r border-gray-800/20 overflow-hidden relative">
                                                     {cell.length === 0 && <div className="w-full h-[1px] bg-gray-800/30"></div>}
                                                     {cell.map((item, itemIdx) => (
-                                                        <div key={itemIdx} className={`flex-1 h-6 min-w-[14px] rounded-[2px] code-font font-mono tracking-tighter flex items-center justify-center whitespace-nowrap overflow-hidden transition-colors duration-300 ${algoState === 'running' ? 'bg-purple-900/30 border border-purple-500/30 text-purple-200' : 'bg-indigo-900/20 border border-indigo-500/20 text-indigo-400'}`} title={item}>
+                                                        <div key={itemIdx} className={`flex-1 h-3.5 min-w-[14px] rounded-[1px] code-font font-mono tracking-tighter flex items-center justify-center whitespace-nowrap overflow-hidden transition-colors duration-300 ${algoState === 'running' ? 'bg-purple-900/30 border border-purple-500/30 text-purple-200' : 'bg-indigo-900/20 border border-indigo-500/20 text-indigo-400'}`} title={item}>
                                                             {item}
                                                         </div>
                                                     ))}
