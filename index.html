@@ -4,9 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史交互地图系统 (v3.02)</title>
+    <title>东亚历史交互地图系统 (v4.00)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <style>
+        /* ... (omitting style for brevity if not matched, but tool needs exact match) */
+        /* Wait, I cannot match lines far apart. I will do Title first, then Config. */
+
         /* --- 1. 全局布局 --- */
         html {
             margin: 0;
@@ -723,6 +726,7 @@
                                 onchange="window.EastAsiaApp.saveApiKey(this.value)">
                         </div>
                         <a onclick="window.GlobalUtils.showAbout()">ℹ️ 关于项目</a>
+                        <a onclick="window.open('LayoutOptimizer.html?autorun=true', '_blank')">📐 重新计算布局 (跳转)</a>
                         <a onclick="window.EastAsiaApp.refreshData()">🔄 刷新数据 (强制重载)</a>
                         <a onclick="window.EastAsiaApp.clearCache()">🗑️ 清除缓存</a>
                         <a onclick="window.EastAsiaApp.toggleLegend(event)">📖 图例面板</a>
@@ -861,14 +865,37 @@
 
         // --- Shared Styles (CSS变量定义) ---
         const SHARED_CSS_STYLES = `
-        /* 基础纹理 */
+        /* 基础纹理 - 增大尺寸以减轻摩尔纹 (Anti-Aliasing Optimized) */
         .texture-C { background-image: linear-gradient(0deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0) 100%); }
         .texture-Q { background-image: linear-gradient(135deg, rgba(255,255,255,0.4) 0%, transparent 50%); }
-        .texture-R { background-image: repeating-linear-gradient(45deg, rgba(0,0,0,0.1), rgba(0,0,0,0.1) 4px, transparent 4px, transparent 8px); }
-        .texture-F { background-image: repeating-linear-gradient(120deg, rgba(255,255,255,0.15) 0, rgba(255,255,255,0.15) 2px, transparent 2px, transparent 6px); }
-        .texture-N { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,0.15) 0, rgba(255,255,255,0.15) 1px, transparent 1px, transparent 4px), repeating-linear-gradient(-45deg, rgba(255,255,255,0.15) 0, rgba(255,255,255,0.15) 1px, transparent 1px, transparent 4px); }
-        .texture-T { background-image: radial-gradient(rgba(255,255,255,0.4) 1px, transparent 1px); background-size: 5px 5px !important; }
+        .texture-R { background-image: repeating-linear-gradient(45deg, rgba(0,0,0,0.1), rgba(0,0,0,0.1) 4px, transparent 4px, transparent 12px); }
+        .texture-F { background-image: repeating-linear-gradient(120deg, rgba(255,255,255,0.15) 0, rgba(255,255,255,0.15) 3px, transparent 3px, transparent 9px); }
+        .texture-N { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,0.15) 0, rgba(255,255,255,0.15) 2px, transparent 2px, transparent 8px), repeating-linear-gradient(-45deg, rgba(255,255,255,0.15) 0, rgba(255,255,255,0.15) 2px, transparent 2px, transparent 8px); }
+        .texture-T { background-image: radial-gradient(rgba(255,255,255,0.4) 1.5px, transparent 1.5px); background-size: 8px 8px !important; }
         
+        /* 默认视觉层级控制：微灰 (0.85)，保留质感 */
+        .fragment, .timeline-slice, .regime-block, .era-block-fragment, .regime-slice {
+            filter: saturate(0.85) brightness(0.95);
+            transition: filter 0.2s ease;
+        }
+
+        /* Hover 状态：恢复鲜活，轻微提亮，层级统一 */
+        /* [Extreme Fix] 移除所有伪类选择器，完全依赖 JS 添加的 .group-hovered 类 */
+        /* 这样确保鼠标悬停的目标(Target)与同组兄弟(Siblings)拥有完全相同的样式权重，消除视觉差异 */
+        /* [Extreme Fix] 全景图(Panorama)完全依赖 .group-hovered 类以保证一致性 */
+        .group-hovered {
+            filter: saturate(1.1) brightness(1.05) !important;
+            z-index: 50 !important;
+            box-shadow: none !important;
+        }
+        
+        /* 地图(Map)和优化器(Optimizer)继续使用 :hover 伪类 */
+        .timeline-slice:hover, .regime-slice:hover, .regime-block:hover {
+            filter: saturate(1.05) brightness(1.02) !important;
+            z-index: 50 !important;
+            box-shadow: none !important;
+        }
+
         /* 特殊关系 - 修正为不覆盖背景图，只添加边框 */
         .texture-V { border-style: dashed !important; border-width: 2px !important; }
         
@@ -889,16 +916,16 @@
             background-size: 8px 8px !important; 
         }
         
+        /* 选中/聚焦状态 (最高优先级) */
         .is-focused, .active-locked {
-            filter: brightness(1.3) contrast(1.1) !important;
+            filter: brightness(1.3) contrast(1.1) saturate(1.2) !important;
             box-shadow: 0 0 0 2px white, 0 4px 15px rgba(0,0,0,0.8) !important;
             z-index: 1000 !important;
-            opacity: 1 !important; transform: scale(1.02); transition: transform 0.2s;
+            opacity: 1 !important; transform: scale(1.02);
         }
     `;
 
         const GLOBAL_CONFIG = {
-            VERSIONS: { INDEX: "v3.01", MAP: "v14.01", PANO: "v87.01" },
             TIME: { MIN_YEAR: -2100, MAX_YEAR: 2025, CURRENT_YEAR: new Date().getFullYear(), DEFAULT_START: -200, PRESENT_YEAR: 2025 },
             FALLBACK_STYLE: { bg: '#666', border: '#444', className: 'texture-C', isDashed: false, textColor: '#fff' }
         };
@@ -932,9 +959,30 @@
                 try { if (typeof fn === 'function') fn.call(context || this); else console.error("safeExec called with non-function"); }
                 catch (e) { console.error(`操作失败: ${e.message}`); }
             },
-            showAbout: function () {
-                const v = GLOBAL_CONFIG.VERSIONS;
-                alert(`EastAsia History Map\n\nCore (index): ${v.INDEX}\nMap Engine: ${v.MAP}\nViz Engine: ${v.PANO}\n\nLast Updated: 2025-12-27\n\nOptimization Phase 1&2 Completed.`);
+            showAbout: async function () {
+                const getVer = async (url) => {
+                    try {
+                        const res = await fetch(url);
+                        const text = await res.text();
+                        const match = text.match(/<title>.*?(v[\d.]+).*?<\/title>/i);
+                        return match ? match[1] : 'v?.??';
+                    } catch (e) { return 'N/A'; }
+                };
+
+                // Current (Index)
+                const vIndex = document.title.match(/v([\d.]+)/) ? 'v' + document.title.match(/v([\d.]+)/)[1] : 'v4.00';
+
+                // Async Fetch others
+                const vMap = await getVer('map.html');
+                const vPano = await getVer('panorama.html');
+                const vLayout = await getVer('LayoutOptimizer.html');
+
+                alert(`EastAsia History Map System\n\n` +
+                    `Core: ${vIndex}\n` +
+                    `Map Engine: ${vMap}\n` +
+                    `Panorama Engine: ${vPano}\n` +
+                    `Layout Opt: ${vLayout}\n\n` +
+                    `Last Sync: ${new Date().toLocaleDateString()}`);
             }
         };
 
@@ -962,19 +1010,53 @@
                 const originalError = console.error;
                 const dbg = document.getElementById('debug-content');
 
-                const appendLog = (msg, type) => {
+                const appendLog = (args, type) => {
                     if (!dbg) return;
                     const div = document.createElement('div');
-                    div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+
+                    // 1. Format Message with Object Expansion (Truncated)
+                    const msg = args.map(arg => {
+                        if (typeof arg === 'object' && arg !== null) {
+                            try {
+                                const str = JSON.stringify(arg, null, 2);
+                                return str.length > 200 ? str.substring(0, 200) + '... [Truncated]' : str;
+                            } catch (e) { return '[Circular Object]'; }
+                        }
+                        return String(arg);
+                    }).join(' ');
+
+                    // 2. Visual Polish
+                    const time = new Date().toLocaleTimeString();
+                    let prefix = 'ℹ️';
+                    if (type === 'warn') prefix = '⚠️';
+                    if (type === 'error') prefix = '❌';
+
+                    // 3. Simple Tag Highlighting (e.g., [Layout] -> Bold Color)
+                    let formattedMsg = msg;
+                    if (msg.startsWith('[')) {
+                        const tagEnd = msg.indexOf(']');
+                        if (tagEnd > -1) {
+                            const tag = msg.substring(0, tagEnd + 1);
+                            const rest = msg.substring(tagEnd + 1);
+                            formattedMsg = `<span style="color:#00ffff;font-weight:bold">${tag}</span>${rest}`;
+                        }
+                    }
+
+                    div.innerHTML = `<span style="opacity:0.6">[${time}]</span> ${prefix} ${formattedMsg.replace(/\n/g, '<br>').replace(/  /g, '&nbsp;&nbsp;')}`;
+
                     if (type === 'error') div.className = 'log-error';
                     if (type === 'warn') div.className = 'log-warn';
+
+                    div.style.borderBottom = "1px solid #222";
+                    div.style.padding = "4px 0";  // Better spacing
+
                     dbg.appendChild(div);
                     dbg.scrollTop = dbg.scrollHeight;
                 };
 
-                console.log = function (...args) { originalLog.apply(console, args); appendLog(args.join(' '), 'log'); };
-                console.warn = function (...args) { originalWarn.apply(console, args); appendLog(args.join(' '), 'warn'); };
-                console.error = function (...args) { originalError.apply(console, args); appendLog(args.join(' '), 'error'); };
+                console.log = function (...args) { originalLog.apply(console, args); appendLog(args, 'log'); };
+                console.warn = function (...args) { originalWarn.apply(console, args); appendLog(args, 'warn'); };
+                console.error = function (...args) { originalError.apply(console, args); appendLog(args, 'error'); };
 
                 window.onerror = function (msg, source, line, col, error) {
                     console.error(`Uncaught Error: ${msg} @ ${source}:${line}`);
@@ -1121,7 +1203,10 @@
                     if (cached) {
                         const parsed = JSON.parse(cached);
                         if (parsed && Array.isArray(parsed) && parsed.length > 0) {
-                            this.processData(parsed);
+                            // [Fix] 等待 Layout 加载完成后再处理数据，确保广播时包含 Layout
+                            this.loadAndCheckLayout(null, () => {
+                                this.processData(parsed);
+                            });
                             return true;
                         }
                     }
@@ -1148,38 +1233,142 @@
 
                 updateLog("正在连接云端数据库...");
                 let cloudDone = false;
+                const cloudUrl = this.config.cloudCsv;
 
-                const timeoutId = setTimeout(() => {
-                    if (!cloudDone) {
-                        console.warn("⏳ Cloud Timeout! Switching to local.");
-                        updateLog("云端连接超时 (10s)，正在切换本地备份...");
-                        this.loadLocal(updateLog);
-                    }
-                }, 10000);
+                // [Refactor] 使用 fetch 获取文本以便计算 Hash，然后手动调用 Papa.parse
+                const fetchCloud = async () => {
+                    try {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s Timeout
 
-                Papa.parse(this.config.cloudCsv, {
-                    download: true, header: true, skipEmptyLines: true,
-                    complete: (results) => {
-                        cloudDone = true;
+                        const response = await fetch(cloudUrl, { signal: controller.signal });
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        const text = await response.text();
+
                         clearTimeout(timeoutId);
-                        console.log(`✅ Cloud Data Loaded: ${results.data.length} records`);
-                        this.saveToCache(results.data);
-                        this.processData(results.data);
-                    },
-                    error: (err) => {
                         if (cloudDone) return;
                         cloudDone = true;
-                        clearTimeout(timeoutId);
-                        console.warn("⚠️ Cloud failed:", err);
+
+                        // 1. 计算 Hash 并校验一致性 (同时加载 Layout)
+                        const hash = this.simpleHash(text);
+                        this.loadAndCheckLayout(hash);
+
+                        // 2. 解析
+                        Papa.parse(text, {
+                            header: true, skipEmptyLines: true,
+                            transform: (val) => val.trim(), // [Fix] Trim whitespace to match LayoutOptimizer logic
+                            complete: (results) => {
+                                console.log(`✅ Cloud Data Loaded: ${results.data.length} records`);
+                                this.saveToCache(results.data);
+                                this.processData(results.data);
+                            }
+                        });
+
+                    } catch (err) {
+                        if (cloudDone) return;
+                        cloudDone = true;
+                        console.warn("⚠️ Cloud failed or timeout:", err);
                         updateLog("云端连接失败，切换本地备份...");
                         this.loadLocal(updateLog);
                     }
-                });
+                };
+
+                fetchCloud();
+            },
+
+            // [New] 简易 Hash (与 LayoutOptimizer 保持一致)
+            simpleHash: (str) => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h) + str.charCodeAt(i); return (h >>> 0).toString(36); },
+
+            // [Optimized] 加载 Layout 并校验一致性 (支持回调以确保顺序)
+            loadAndCheckLayout: function (currentCsvHash, callback) {
+                let loaded = false;
+                try {
+                    // [Fix] 不指定版本号，打开当前最新版本，防止因 optimizer 升级版本导致 index.html 无法打开
+                    const req = indexedDB.open("EastAsiaHistoryDB");
+                    req.onerror = (e) => {
+                        console.warn("❌ DB Open Failed:", e.target.error);
+                        if (callback) callback();
+                    };
+                    req.onsuccess = (e) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains("layouts")) { if (callback) callback(); return; }
+                        const tx = db.transaction("layouts", "readonly");
+                        const store = tx.objectStore("layouts");
+                        const getReq = store.get("current");
+                        getReq.onsuccess = () => {
+                            const rec = getReq.result;
+                            if (rec && rec.data) {
+                                // 1. 保存到 State
+                                this.state.layoutData = rec.data;
+                                console.log("✅ Layout loaded from DB");
+
+                                // 2. 校验 Hash (仅当提供了当前Hash时)
+                                if (currentCsvHash && rec.data.dataHash && rec.data.dataHash !== currentCsvHash) {
+                                    this.showDesyncAlert();
+                                }
+                            }
+                            // 无论成功与否，只要 DB 操作结束，就执行回调（用于触发 processData）
+                            if (callback) callback();
+
+                            // 3. 如果是异步更新且数据已就绪，再次广播
+                            if (!callback && this.state.dataReady) {
+                                this.broadcastData();
+                            }
+                        };
+                        getReq.onerror = () => { if (callback) callback(); };
+                    };
+                } catch (e) {
+                    console.warn("IndexDB check failed", e);
+                    if (callback) callback();
+                }
+            },
+
+            // [New] 显示 SOP 报警
+            showDesyncAlert: function () {
+                // ... (Previous logic remains, implicitly handled by not replacing checking logic if I guard lines correctly)
+                // Wait, I need to be careful not to delete showDesyncAlert.
+                // I will target checkLayoutSync only.
+            },
+            showDesyncAlert: function () {
+                const msg = `
+                    <div style="text-align:left; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                        <p style="color:#fbbf24; font-weight:bold; font-size:16px; margin-bottom:8px">⚠️ 数据源版本不一致</p>
+                        <p style="margin-bottom:8px">检测到 CSV 数据源已更新，但 Layout 布局数据仍为旧版。</p>
+                        <p style="margin-bottom:12px; font-size:12px; opacity:0.8">这会导致全景图显示错乱 (Fall back to full width)。</p>
+                        <div style="background:rgba(255,255,255,0.1); padding:12px; border-radius:6px; border:1px solid rgba(255,255,255,0.1)">
+                            <p style="font-weight:bold; margin-bottom:8px; color:#4ade80">🛠️ 标准修复流程 (SOP):</p>
+                            <ol style="padding-left:20px; line-height:1.6; margin:0; font-size:13px">
+                                <li>打开 <a href="LayoutOptimizer.html" target="_blank" style="color:#60a5fa; text-decoration:underline">LayoutOptimizer</a></li>
+                                <li>点击 "☁️ 云端数据" 加载最新 CSV</li>
+                                <li>点击 "Run" 重新计算布局</li>
+                                <li>点击 "💾 写入 DB" 存入新 Hash</li>
+                                <li>刷新本页面</li>
+                            </ol>
+                        </div>
+                    </div>
+                `;
+                // 使用 GlobalUtils.showToast 但设置超长时间，或者造一个 Modal
+                // 这里为了显眼，直接覆盖一个全屏遮罩或者用特定的 Alert UI
+                // 我们复用 showToast 但自定义样式
+                const container = document.getElementById('global-toast-container') || document.body;
+                const div = document.createElement('div');
+                div.innerHTML = msg;
+                div.style.cssText = 'position:fixed; top:80px; right:20px; width:360px; background:#1e293b; color:#fff; padding:20px; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.6); border:2px solid #f59e0b; z-index:999999; animation: slideIn 0.3s ease-out;';
+
+                // Add Close Button
+                const close = document.createElement('span');
+                close.innerHTML = '×';
+                close.style.cssText = 'position:absolute; top:10px; right:15px; cursor:pointer; font-size:24px; opacity:0.6;';
+                close.onclick = () => div.remove();
+                div.appendChild(close);
+
+                container.appendChild(div);
             },
 
             loadLocal: function (updateLog) {
                 Papa.parse(this.config.localCsv, {
                     download: true, header: true, skipEmptyLines: true,
+                    transform: (val) => val.trim(), // [Fix] Trim whitespace
                     complete: (results) => {
                         console.log(`✅ Local Data Loaded: ${results.data.length} records`);
                         this.processData(results.data);
@@ -1213,6 +1402,7 @@
                     payload: {
                         data: this.state.rawData,
                         sharedCSS: SHARED_CSS_STYLES,
+                        layout: this.state.layoutData, // [Fix] 传递 Layout 数据
                         config: { apiKey: this.state.apiKey }
                     }
                 };
@@ -1225,7 +1415,7 @@
             },
 
             // --- 替换 index.html 中的 calcColor ---
-            calcColor: function (code) {
+            calcColor: function (code, name) { // [New] 增加 name 参数以增强哈希区分度
                 if (!code) return '#666';
 
                 const strCode = String(code);
@@ -1259,21 +1449,49 @@
                 };
                 const baseHue = hueMap[originDigit] !== undefined ? hueMap[originDigit] : 0;
 
+                // [Enhanced Hash] 混合 Name 和 Code 以产生最大差异
+                let seedStr = code;
+                if (name) seedStr += name;
+
                 let hash = 0;
-                for (let i = 0; i < code.length; i++) hash = code.charCodeAt(i) + ((hash << 5) - hash);
+                for (let i = 0; i < seedStr.length; i++) hash = seedStr.charCodeAt(i) + ((hash << 5) - hash);
                 hash = Math.abs(hash);
 
-                // 微调：将随机跳变限制在 +/- 6 度，保持色系统一感
-                const hueShift = (hash % 2 === 0) ? -6 : 6;
+                // [Perturbation Improved] 
+                // 1. Hue: 双极性偏移 (Bipolar Shift)
+                // 强制偏移量至少为 3 度，范围 [-8, -3] 或 [3, 8]
+                // 默认随机方向
+                let hueDir = (hash % 2 === 0) ? 1 : -1;
+                if (name && /[东前左上]/.test(name)) hueDir = 1;
+                if (name && /[西后右下]/.test(name)) hueDir = -1;
+
+                // 允许 0 度偏移，充分利用 0-8 度空间
+                const hueMag = hash % 9;
+                const hueShift = hueDir * hueMag;
+
                 let h = baseHue + hueShift;
-                let l = 30 + (eraDigit * 5.0);
-                l = Math.max(25, Math.min(75, l));
+                if (h < 0) h += 360;
+
+                // 2. Lightness: 基于 Era 基准，叠加 +/- 8% 的随机扰动
+                let baseL = 30 + (eraDigit * 5.0);
+                // 使用不同的位运算混淆hash，减少hue和lightness的相关性
+                const lJitter = ((hash >> 2) % 17) - 8;
+                // [Semantic Override] 语义覆盖：南/东 偏亮，北/西 偏暗
+                let lBias = 0;
+                if (name) {
+                    if (/[南东前]/.test(name)) lBias = 5;
+                    if (/[北西后]/.test(name)) lBias = -5;
+                }
+
+                let l = Math.max(25, Math.min(80, baseL + lJitter + lBias)); // 放宽上限到 80
+
+                // 3. Saturation: 扰动 +/- 8%
                 const baseSat = 45 + (eraDigit * 5);
-                const satJitter = (hash % 16) - 8;
+                const satJitter = ((hash >> 4) % 17) - 8; // 右移取另一段 hash 避免相关性
                 let s = Math.max(30, Math.min(95, baseSat + satJitter));
 
                 if (originDigit === '0') return `hsl(0, 0%, ${l}%)`;
-                if (originDigit === '6') { l -= 15; s -= 5; }
+                if (originDigit === '6') { l -= 10; s -= 5; } // 蒙古稍微压暗
 
                 return `hsl(${h}, ${s}%, ${l}%)`;
             },
@@ -1281,7 +1499,7 @@
             getStyle: function (regimeCode, name, suzerainCode, suzerainType) {
                 if (!regimeCode) return { bg: '#666', border: '#444', className: 'texture-C', isDashed: false };
 
-                const selfColor = this.calcColor(regimeCode);
+                const selfColor = this.calcColor(regimeCode, name);
                 const typeChar = regimeCode.charAt(0).toUpperCase();
 
                 let finalBg = selfColor;

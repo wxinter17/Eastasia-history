@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>History Map View (v14.02)</title>
+    <title>History Map View (v15.00)</title>
 
     <script>
         window.onerror = function (msg, url, line, col, error) {
@@ -1115,6 +1115,33 @@
             }
         };
 
+        const GLOBAL_CONFIG = window.parent?.GLOBAL_CONFIG || {
+            TIME: { MIN_YEAR: -2100, MAX_YEAR: 2025 }
+        };
+
+        // [New] Logger Bridge for Map
+        if (window.parent && window.parent.console) {
+            const originalLog = console.log;
+            const originalWarn = console.warn;
+            const originalError = console.error;
+
+            console.log = function (...args) {
+                originalLog.apply(console, args);
+                try { window.parent.console.log("[Map]", ...args); } catch (e) { }
+            };
+            console.warn = function (...args) {
+                originalWarn.apply(console, args);
+                try { window.parent.console.warn("[Map]", ...args); } catch (e) { }
+            };
+            console.error = function (...args) {
+                originalError.apply(console, args);
+                try { window.parent.console.error("[Map]", ...args); } catch (e) { }
+            };
+            window.onerror = function (msg, source, line, col, error) {
+                try { window.parent.console.error(`[Map] Uncaught: ${msg} @ ${line}`); } catch (e) { }
+            };
+        }
+
         const State = {
             layers: {},
             dataMap: {},
@@ -1152,6 +1179,8 @@
                 }
                 console.log("正在初始化地图...");
                 MapCtrl.init(); // 初始化 Leaflet
+                // [新增] 启动时尝试同步布局库
+                this.loadLayoutFromDB();
                 // 【新增】必须在这里显式调用渲染，否则地图上只有底图，没有色块
                 MapCtrl.render();
 
@@ -1301,6 +1330,42 @@
                         UICtrl.closeModal('regime-modal');
                     });
                 }
+            },
+
+            // [新增] 加载布局数据库 (实现与 LayoutOptimizer 的数据互通)
+            // [New] Unify DB Connection
+            loadLayoutFromDB: function () {
+                return new Promise((resolve) => {
+                    if (!window.indexedDB) { resolve(false); return; }
+                    // [Fix] Connect to the Unified DB
+                    const request = indexedDB.open("EastAsiaHistoryDB");
+                    request.onsuccess = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains("layouts")) { resolve(false); return; }
+                        const transaction = db.transaction(["layouts"], "readonly");
+                        const objectStore = transaction.objectStore("layouts");
+                        const req = objectStore.get("current");
+                        req.onsuccess = (e) => {
+                            const res = e.target.result;
+                            if (res && res.data && res.data.colOrder) {
+                                // Sync Column Order to RankMap (GeoID -> Index)
+                                State.rankMap = {};
+                                res.data.colOrder.forEach((geoId, index) => {
+                                    State.rankMap[geoId] = index;
+                                });
+                                Logger.info(`✅ 布局同步成功: Has ${res.data.colOrder.length} regions`);
+                                resolve(true);
+                            } else {
+                                resolve(false);
+                            }
+                        };
+                        req.onerror = () => resolve(false);
+                    };
+                    request.onerror = (e) => {
+                        console.warn("DB Open Failed", e);
+                        resolve(false);
+                    };
+                });
             },
 
             // --- [修复] 地图页专用复位函数 ---
@@ -1498,7 +1563,8 @@
                         tier: parseInt(r.regime_tier) || 3,
                         desc: r.desc,
                         geo_code: c, // [新增] 补充地理编码供筛选使用
-                        _id: (r.regime_name || r.name) + r.start_year
+                        // [Fix] ID 策略：Name + Code (与 LayoutOptimizer 统一，确保 Ranking 查找命中)
+                        _id: (r.regime_name || r.name) + "-" + (r.regime_code || r.name)
                     };
 
                     State.dataMap[c].regimes.push(regimeItem);
@@ -2141,7 +2207,23 @@
                     const active = regimes.filter(r => r._start < t2 && r._end > t1);
                     if (active.length === 0) continue;
 
-                    active.sort((a, b) => a._globalLane - b._globalLane);
+                    // [核心修改] 引入全局 Rank 排序
+                    // 如果存在 State.rankMap，则按照全景图的 Master Sequence 进行对齐
+                    active.sort((a, b) => {
+                        if (State.rankMap) {
+                            // [Fix] Use Region Rank (Unified with Panorama Column Order)
+                            const geoA = a.geoCode || a.geo_code;
+                            const geoB = b.geoCode || b.geo_code;
+                            const rankA = State.rankMap[geoA];
+                            const rankB = State.rankMap[geoB];
+                            // 只有当两者都有 Rank 时才比较 Rank
+                            if (rankA !== undefined && rankB !== undefined) {
+                                return rankA - rankB;
+                            }
+                        }
+                        // 降级策略：按车道或时间排序
+                        return a._globalLane - b._globalLane;
+                    });
                     const count = active.length;
                     const unitWidth = 100 / count;
                     const zIndexBase = 50000 - (i * 100);

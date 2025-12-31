@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v87.04)</title>
+    <title>东亚历史全景 (v88.01)</title>
     <!-- [Unified CSS] Native Style (Merged) -->
     <link
         href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700;900&family=Inter:wght@400;600&display=swap"
@@ -188,16 +188,7 @@
             border-right: none !important;
         }
 
-        body:not(.mode-focus) .era-block-fragment:hover {
-            /* [Fix] 不再提升 z-index，防止覆盖相邻色块 */
-            filter: brightness(1.2) contrast(1.1);
-        }
-
-        .group-hovered {
-            filter: brightness(1.2) contrast(1.1) !important;
-            opacity: 1 !important;
-            /* [Fix] 不再提升 z-index，防止覆盖相邻色块 */
-        }
+        /* [Fix] Removed conflicting internal hover styles. Rely on SHARED_CSS_STYLES from index.html */
 
         /* --- Focus Mode --- */
         body.mode-focus .era-block-fragment:not(.is-focused) {
@@ -498,9 +489,13 @@
             white-space: normal;
         }
 
-        .header-col-label:hover {
+        .header-col-label:hover,
+        .header-col-label.active-header {
             color: var(--blue-400);
+            background: rgba(255, 255, 255, 0.1);
+            z-index: 50;
         }
+
 
         .timeline-tick-label {
             position: absolute;
@@ -732,7 +727,12 @@
     <div id="main-content">
         <div id="chart-container">
             <div id="sticky-header-row">
-                <div id="header-corner"></div>
+                <div id="header-corner">
+                    <button id="btn-flip-cols" title="翻转地区列"
+                        style="width:100%; height:100%; border:none; background:transparent; color:var(--slate-500); cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center; transition:color 0.2s;">
+                        ⇄
+                    </button>
+                </div>
                 <div id="header-body"></div>
             </div>
             <div id="chart-body-row">
@@ -758,17 +758,40 @@
     <script>
         // 从父级获取年份配置，如果父级不可用则使用本地默认值
         const TIME_CONFIG = window.parent?.GLOBAL_CONFIG?.TIME || {
-            MIN_YEAR: -2100,
-            MAX_YEAR: 2025
+            minYear: -2100, // 注意: GLOBAL_CONFIG 用大写 key, 这里 fallback 用大写
+            maxYear: 2025
         };
 
+        // [New] Logger Bridge: Forward logs to parent console
+        if (window.parent && window.parent.console) {
+            const originalLog = console.log;
+            const originalWarn = console.warn;
+            const originalError = console.error;
+
+            console.log = function (...args) {
+                originalLog.apply(console, args);
+                try { window.parent.console.log("[Pano]", ...args); } catch (e) { }
+            };
+            console.warn = function (...args) {
+                originalWarn.apply(console, args);
+                try { window.parent.console.warn("[Pano]", ...args); } catch (e) { }
+            };
+            console.error = function (...args) {
+                originalError.apply(console, args);
+                try { window.parent.console.error("[Pano]", ...args); } catch (e) { }
+            };
+            window.onerror = function (msg, source, line, col, error) {
+                try { window.parent.console.error(`[Pano] Uncaught: ${msg} @ ${line}`); } catch (e) { }
+            };
+        }
+
         const APP_CONFIG = {
-            minYear: TIME_CONFIG.MIN_YEAR,
-            maxYear: TIME_CONFIG.MAX_YEAR
+            minYear: TIME_CONFIG.MIN_YEAR || -2100,
+            maxYear: TIME_CONFIG.MAX_YEAR || 2025
         };
 
         const Core = {
-            state: { regions: [], regionIndexMap: {}, regimeGroups: [], zoom: 1.5, rawData: [], features: { connections: true }, focusedGroupId: null, lastClickedGeoCode: null, layoutCache: {}, intraColumnCache: {} },
+            state: { regions: [], regionIndexMap: {}, regimeGroups: [], zoom: 1.5, rawData: [], features: { connections: true }, focusedGroupId: null, lastClickedGeoCode: null, layoutCache: {}, intraColumnCache: {}, isFlipped: false },
 
             init: function () {
                 // [Fix] 禁用浏览器滚动恢复
@@ -778,6 +801,84 @@
 
                 // [Fix] 记录初始化时间，用于拦截初始阶段的错误滚动指令
                 this._initTime = Date.now();
+
+                // [New] 加载布局策略：IndexedDB (优先) -> layout.json (降级)
+                this.state.layoutData = null;
+
+                // 策略 3: 静态文件兜底
+                const loadFromStatic = () => {
+                    console.warn("🔻 [Layout] Fallback to Static JSON");
+                    fetch('layout.json?t=' + Date.now())
+                        .then(response => response.json())
+                        .then(json => applyLayout(json, 'Static'))
+                        .catch(err => console.error("❌ Failed to load layout.json:", err));
+                };
+
+                // 策略 2: LocalStorage 镜像兜底
+                const loadFromMirror = () => {
+                    console.warn("🔻 [Layout] Fallback to Mirror");
+                    try {
+                        const raw = localStorage.getItem('layout_mirror');
+                        if (raw) {
+                            const data = JSON.parse(raw);
+                            applyLayout(data, 'Mirror');
+                        } else {
+                            loadFromStatic();
+                        }
+                    } catch (e) {
+                        console.warn("Mirror load failed:", e);
+                        loadFromStatic();
+                    }
+                };
+
+                const applyLayout = (json, source) => {
+                    console.log(`📜 Layout loaded from [${source}]`);
+                    // 如果来自 DB，顺手更新一份到 Mirror (作为下次的快速兜底)
+                    if (source === 'IndexedDB') {
+                        try {
+                            localStorage.setItem('layout_mirror', JSON.stringify(json));
+                            console.log("💾 Synced to Mirror");
+                        } catch (e) {
+                            console.warn("⚠️ Mirror Sync Skipped (Quota Exceeded?)");
+                        }
+                    }
+
+                    this.state.layoutData = json;
+                    if (this.state.rawData && this.state.rawData.length > 0) {
+                        this.updateLayout();
+                    }
+                };
+
+                // 策略 1: 尝试读取 IndexedDB (移除版本号以自动匹配)
+                try {
+                    const req = indexedDB.open("EastAsiaHistoryDB");
+                    req.onerror = () => { console.warn("DB Open Failed"); loadFromMirror(); };
+
+                    req.onsuccess = (e) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains("layouts")) {
+                            console.warn("DB Store 'layouts' missing");
+                            loadFromMirror();
+                            return;
+                        }
+                        const tx = db.transaction(["layouts"], "readonly");
+                        const store = tx.objectStore("layouts");
+                        const getReq = store.get("current");
+
+                        getReq.onsuccess = () => {
+                            if (getReq.result && getReq.result.data) {
+                                applyLayout(getReq.result.data, 'IndexedDB');
+                            } else {
+                                console.warn("DB Data Empty");
+                                loadFromMirror();
+                            }
+                        };
+                        getReq.onerror = () => { console.warn("DB Get Failed"); loadFromMirror(); };
+                    };
+                } catch (e) {
+                    console.error("DB Exception:", e);
+                    loadFromMirror();
+                }
 
                 window.addEventListener('message', (e) => {
                     // 【关键修复】安全阀
@@ -920,6 +1021,13 @@
                 safeBind('btn-connections', 'click', () => this.toggleFeature('connections'));
                 safeBind('btn-close-panel', 'click', () => this.ui.closePanel());
                 safeBind('btn-close-modal', 'click', () => document.getElementById('selection-modal').classList.add('hidden'));
+                safeBind('btn-flip-cols', 'click', () => {
+                    this.state.isFlipped = !this.state.isFlipped;
+                    this.updateLayout();
+                    // 可选：给按钮增加激活状态样式
+                    const btn = document.getElementById('btn-flip-cols');
+                    if (btn) btn.style.color = this.state.isFlipped ? 'var(--blue-400)' : 'var(--slate-500)';
+                });
                 safeBind('quick-nav', 'change', (e) => {
                     const y = parseInt(e.target.value);
                     if (!isNaN(y)) {
@@ -964,14 +1072,54 @@
                     // [修改] 移除外部的 const crosshairLabel = ...
 
                     renderArea.addEventListener('mousemove', function (e) {
-                        // [修改] 在事件触发时动态获取最新的 label 元素
-                        const crosshairLabel = document.getElementById('crosshair-label');
-
                         const rect = renderArea.getBoundingClientRect();
                         const y = e.clientY - rect.top;
+
+                        // 1. Crosshair Line & Label
                         if (crosshairLine) { crosshairLine.style.display = 'block'; crosshairLine.style.top = y + 'px'; }
+                        const crosshairLabel = document.getElementById('crosshair-label'); // Dynamic get
                         const year = Math.floor((y / Core.state.zoom) + APP_CONFIG.minYear);
                         if (crosshairLabel) { crosshairLabel.style.display = 'block'; crosshairLabel.style.top = y + 'px'; crosshairLabel.innerText = year; }
+
+
+                        if (colCount > 0 && totalW > 0) {
+                            const colW = totalW / colCount;
+                            // e.clientX is viewport x.
+                            // We need x relative to renderArea's content start.
+                            // renderArea is inside #main-content or #chart-container? 
+                            // Actually, renderArea is Flex:1 inside #chart-body-row.
+                            // The scroll happens on #main-content.
+                            // So we need: (e.clientX + mainContent.scrollLeft) - offset of mainContent?
+                            // Simplified: e.layerX or e.offsetX? No, unreliable.
+                            // Best: e.clientX - rect.left.
+                            // rect.left changes as we scroll. If scanned right, rect.left < 0.
+                            // So (e.clientX - rect.left) gives correct X offset from start of renderArea.
+                            const mouseX = e.clientX - rect.left;
+                            const colIdx = Math.floor(mouseX / colW);
+
+                            const headerBody = document.getElementById('header-body');
+                            if (headerBody && headerBody.children.length > colIdx && colIdx >= 0) {
+                                const old = headerBody.querySelector('.active-header');
+                                const target = headerBody.children[colIdx];
+                                if (old !== target) {
+                                    if (old) old.classList.remove('active-header');
+                                    if (target) target.classList.add('active-header');
+                                }
+                            }
+                        }
+                    });
+
+                    renderArea.addEventListener('mouseleave', function () {
+                        if (crosshairLine) crosshairLine.style.display = 'none';
+                        const crosshairLabel = document.getElementById('crosshair-label');
+                        if (crosshairLabel) crosshairLabel.style.display = 'none';
+
+                        // Clear header highlight
+                        const headerBody = document.getElementById('header-body');
+                        if (headerBody) {
+                            const old = headerBody.querySelector('.active-header');
+                            if (old) old.classList.remove('active-header');
+                        }
                     });
                 }
             },
@@ -1002,7 +1150,8 @@
                     if (!uniqueRegs[geoCode]) uniqueRegs[geoCode] = geoName;
 
                     const regimeName = r.regime_name || r.name || "未知政权";
-                    const regimeCode = r.regime_code || "C11";
+                    // [Fix] Fallback 逻辑与 LayoutOptimizer 统一：如果没有 Code，使用 Name 代替，而不是 "C11"
+                    const regimeCode = r.regime_code || regimeName;
                     // [Fix] 使用 name + code 作为唯一标识，防止同名不同政权被错误合并
                     // 例如：战国秦(R1150) 和 秦朝秦(C2100) 必须分开
                     const key = regimeName + '|' + regimeCode;
@@ -1059,7 +1208,8 @@
                         suzerain: rawSuzCode,
                         suzerainName: resolvedSuzName,
                         suzerainType: r.suzerain_type,
-                        desc: r.desc
+                        desc: r.desc,
+                        group: groups[key] // [Fix] Link back to group for easy access
                     };
 
                     groups[key].fragments.push(frag);
@@ -1079,6 +1229,50 @@
             },
 
             updateLayout: function () {
+                // [New] 数据一致性检查 (仅运行一次)
+                // 如果发现 CSV 中的政权在 Layout 缓存中不存在，提示用户更新
+                if (this.state.layoutData && this.state.layoutData.layout && !this.state.hasCheckedConsistency) {
+                    this.state.hasCheckedConsistency = true;
+                    let missingCount = 0;
+
+                    // 构建快速查找表: region -> Set(regimeNames)
+                    // 为了性能，不遍历所有年份，只根据 names 字段 (如果 v8 json 提供了)
+                    // v8 json root has "names" which is region map. Not regime map.
+                    // We have to iterate the layout structure roughly or check rawData.
+
+                    // 采用采样检查策略：遍历 CSV 数据，看看是否能在 Layout 中找到对应的“位置槽”
+                    // 如果找不到，说明是新政权
+                    const layout = this.state.layoutData.layout;
+
+                    for (const frag of this.state.rawData) {
+                        const rid = frag.geoCode;
+                        const rname = frag.group.id; // [Fix] Check ID (Name|Code) against Layout Slots
+                        // 检查该地区是否有布局数据
+                        if (!layout[rid]) { missingCount++; break; }
+
+                        // 检查该政权的起始年份是否有位置
+                        // (只查起始年，假设如果起始年有，后面都有；如果起始年没有，就是新的)
+                        const yKey = String(Math.max(frag.start, APP_CONFIG.minYear));
+                        const slots = layout[rid][yKey];
+
+                        if (!slots || !slots.includes(rname)) {
+                            // double check with a few years later to avoid edge case
+                            missingCount++;
+                            // 只要发现一个确定的缺失，就中断检查，避免弹窗多次或性能损耗
+                            break;
+                        }
+                    }
+
+                    if (missingCount > 0) {
+                        // 延时弹出，以免阻断首屏渲染
+                        setTimeout(() => {
+                            if (confirm("⚠️ 数据更新提示\n\n检测到 CSV 中存在新政权，但当前布局缓存中未包含其位置信息。\n这可能导致显示错乱。\n\n是否立即跳转到优化器重新计算布局？")) {
+                                window.open('LayoutOptimizer.html?autorun=true', '_blank');
+                            }
+                        }, 1000);
+                    }
+                }
+
                 this.state.regions = this.logic.applyFixedLayout(this.state.rawRegions);
                 this.state.regionIndexMap = this.state.regions.reduce((acc, r, i) => { acc[r.id] = i; return acc; }, {});
 
@@ -1147,184 +1341,147 @@
                 },
 
                 applyFixedLayout: function (rawRegions) {
-                    const FIXED_ORDER = ['550', '530', '520', '510', '540', '440', '410', '420', '430', '330', '350', '340', '260', '270', '310', '250', '240', '320', '220', '210', '230', '190', '150', '130', '140', '160', '120', '110', '180', '170', '610', '620', '740', '730', '720', '710', '820', '810', '840', '830', '850', '910', '920', '930', '940', '950', '960'];
-                    const rankMap = {}; FIXED_ORDER.forEach((c, i) => rankMap[c] = i);
-                    return rawRegions.slice().sort((a, b) => {
-                        const rA = rankMap[a.id] !== undefined ? rankMap[a.id] : 9999;
-                        const rB = rankMap[b.id] !== undefined ? rankMap[b.id] : 9999;
-                        return rA - rB;
-                    });
+                    let sorted = [];
+                    if (Core.state.layoutData && Core.state.layoutData.colOrder) {
+                        const orderMap = {};
+                        Core.state.layoutData.colOrder.forEach((id, i) => orderMap[id] = i);
+                        sorted = rawRegions.slice().sort((a, b) => {
+                            const rA = orderMap[a.id] !== undefined ? orderMap[a.id] : 9999;
+                            const rB = orderMap[b.id] !== undefined ? orderMap[b.id] : 9999;
+                            return rA - rB;
+                        });
+                    } else {
+                        // Fallback (Original fixed order)
+                        const FIXED_ORDER = ['550', '530', '520', '510', '540', '440', '410', '420', '430', '330', '350', '340', '260', '270', '310', '250', '240', '320', '220', '210', '230', '190', '150', '130', '140', '160', '120', '110', '180', '170', '610', '620', '740', '730', '720', '710', '820', '810', '840', '830', '850', '910', '920', '930', '940', '950', '960'];
+                        const rankMap = {}; FIXED_ORDER.forEach((c, i) => rankMap[c] = i);
+                        sorted = rawRegions.slice().sort((a, b) => {
+                            const rA = rankMap[a.id] !== undefined ? rankMap[a.id] : 9999;
+                            const rB = rankMap[b.id] !== undefined ? rankMap[b.id] : 9999;
+                            return rA - rB;
+                        });
+                    }
+
+                    if (Core.state.isFlipped) {
+                        sorted.reverse();
+                    }
+                    return sorted;
                 },
 
                 sliceFragmentsByRegion: function (fragments, colIdx, allGroups, regionIndexMap, layoutCache) {
                     if (!fragments || fragments.length === 0) return [];
-
-                    // ========== 阶段1：预排布（全局总分） ==========
-                    const columnGroups = {};
-                    fragments.forEach(f => {
-                        if (!columnGroups[f.groupId]) {
-                            columnGroups[f.groupId] = {
-                                groupId: f.groupId,
-                                group: f.group,
-                                name: f.group.name,
-                                minStart: f.start,
-                                maxEnd: f.end
-                            };
-                        }
-                        columnGroups[f.groupId].minStart = Math.min(columnGroups[f.groupId].minStart, f.start);
-                        columnGroups[f.groupId].maxEnd = Math.max(columnGroups[f.groupId].maxEnd, f.end);
-                    });
-
-                    // 从所有groups获取所有fragments
-                    const allFragments = [];
-                    allGroups.forEach(g => {
-                        g.fragments.forEach(f => allFragments.push(f));
-                    });
-
-                    // 计算全局重叠（用于预排布）
-                    Object.keys(columnGroups).forEach(gId => {
-                        const cg = columnGroups[gId];
-                        let leftSame = 0, leftDiff = 0, rightSame = 0, rightDiff = 0;
-
-                        allFragments.forEach(af => {
-                            const afColIdx = regionIndexMap[String(af.geoCode).trim()];
-                            const afName = af.name.split('|')[0];
-                            const overlapStart = Math.max(af.start, cg.minStart);
-                            const overlapEnd = Math.min(af.end, cg.maxEnd);
-
-                            if (overlapEnd > overlapStart) {
-                                const duration = overlapEnd - overlapStart;
-                                const isSameName = (afName === cg.name);
-
-                                if (afColIdx === colIdx - 1) {
-                                    if (isSameName) leftSame += duration;
-                                    else leftDiff += duration;
-                                } else if (afColIdx === colIdx + 1) {
-                                    if (isSameName) rightSame += duration;
-                                    else rightDiff += duration;
-                                }
-                            }
-                        });
-
-                        cg.globalScore = (rightSame * 10 + rightDiff) - (leftSame * 10 + leftDiff);
-                    });
-
-                    const points = new Set();
-                    fragments.forEach(f => { if (!isNaN(f.start)) points.add(f.start); if (!isNaN(f.end)) points.add(f.end); });
-                    const sortedPoints = Array.from(points).sort((a, b) => a - b);
                     const slices = [];
 
-                    if (!layoutCache[colIdx]) layoutCache[colIdx] = {};
+                    // 1. 获取当前列对应的 Region ID
+                    // fragments 中的 geoCode 应该都是同一个，但为了保险去 Core.state.regions 查
+                    const regionObj = Core.state.regions[colIdx];
+                    if (!regionObj) return [];
+                    const regionId = regionObj.id;
 
-                    // ========== 阶段2：精细化处理 ==========
-                    let prevWidth = null;
-                    let prevCount = null; // 上一时间段的政权数量
-                    const positionCache = {}; // {groupId: {leftPct: number, width: number}}
+                    // 2. 检查是否有预计算的 layout 数据
+                    const hasLayout = Core.state.layoutData && Core.state.layoutData.layout && Core.state.layoutData.layout[regionId];
+                    const layoutMap = hasLayout ? Core.state.layoutData.layout[regionId] : null;
 
-                    for (let i = 0; i < sortedPoints.length - 1; i++) {
-                        const pStart = sortedPoints[i];
-                        const pEnd = sortedPoints[i + 1];
-                        const activeFrags = fragments.filter(f => f.start <= pStart && f.end >= pEnd);
-
-                        if (activeFrags.length > 0) {
-                            const width = 100 / activeFrags.length;
-                            const widthChanged = (prevWidth !== null && Math.abs(width - prevWidth) > 0.1);
-                            const countChanged = (prevCount !== null && prevCount !== activeFrags.length);
-
-                            // [Fix] 检查每个政权的宽度是否变化 AND 成员数量是否变化
-                            const allWidthsUnchanged = !countChanged && activeFrags.every(f => {
-                                const prevPos = positionCache[f.groupId];
-                                if (prevPos === undefined) return false; // 新政权
-                                // 计算上一时间段该政权的宽度
-                                const prevW = prevPos.width;
-                                return Math.abs(width - prevW) < 0.1;
+                    // 如果没有布局数据，直接返回全宽 (Fallback)
+                    if (!layoutMap) {
+                        fragments.forEach(f => {
+                            const newFrag = Object.assign({}, f);
+                            newFrag.displayStart = f.start;
+                            newFrag.displayEnd = f.end;
+                            newFrag.leftPct = 0;
+                            newFrag.widthPct = 100;
+                            newFrag.group.visualSlices.push({
+                                cIdx: colIdx,
+                                start: f.start, end: f.end,
+                                left: 0, w: 1, dur: f.end - f.start
                             });
+                            slices.push(newFrag);
+                        });
+                        return slices;
+                    }
 
-                            // [Fix] 单政权独占整列：无需排序
-                            if (activeFrags.length === 1) {
-                                // 独占整列，idx=0会自动让leftPct=0
-                            } else if (allWidthsUnchanged) {
-                                // 所有政权宽度都不变：按上一时间段的leftPct排序
-                                activeFrags.sort((a, b) => {
-                                    const posA = positionCache[a.groupId]?.leftPct || 0;
-                                    const posB = positionCache[b.groupId]?.leftPct || 0;
-                                    return posA - posB;
-                                });
+                    // 3. 基于 layout.json 切割时段
+                    fragments.forEach(frag => {
+                        const regimeName = frag.group.name;
+                        const regimeCode = frag.group.regimeCode || regimeName; // [Fix] 获取 Code
 
+                        // [Fix] 构造目标 ID，必须匹配 LayoutOptimizer 的 'Name|Code' 格式
+                        const targetID = regimeName + "|" + regimeCode;
 
-                            } else {
-                                // 有宽度变化：重新计算
-                                if (prevWidth === null) {
-                                    // 第一个时间段：使用预排布
-                                    activeFrags.sort((a, b) => {
-                                        const scoreA = columnGroups[a.groupId]?.globalScore || 0;
-                                        const scoreB = columnGroups[b.groupId]?.globalScore || 0;
-                                        return scoreA - scoreB;
-                                    });
+                        const start = Math.max(frag.start, APP_CONFIG.minYear);
+                        const end = Math.min(frag.end, APP_CONFIG.maxYear);
+                        if (start >= end) return;
+
+                        let currStart = start;
+                        let currLeft = -1;
+                        let currWidth = -1;
+
+                        for (let y = start; y < end; y++) {
+                            const yearKey = String(y);
+                            const slots = layoutMap[yearKey] || [];
+
+                            // [Fix] 查找逻辑升级：优先查新ID，查不到再查旧ID(兼容)
+                            let slotIdx = slots.indexOf(targetID);
+                            if (slotIdx === -1) slotIdx = slots.indexOf(regimeName);
+                            let totalSlots = slots.length;
+
+                            let left = 0, width = 100;
+
+                            if (slotIdx !== -1 && totalSlots > 0) {
+                                width = 100 / totalSlots;
+                                if (Core.state.isFlipped) {
+                                    left = (totalSlots - 1 - slotIdx) * width;
                                 } else {
-                                    // 宽度改变：基于当前时间段计算分数
-                                    activeFrags.sort((a, b) => {
-                                        const cgA = columnGroups[a.groupId];
-                                        const cgB = columnGroups[b.groupId];
-
-                                        let aLeft = 0, aRight = 0, bLeft = 0, bRight = 0;
-
-                                        allFragments.forEach(af => {
-                                            const afColIdx = regionIndexMap[String(af.geoCode).trim()];
-                                            const afName = af.name.split('|')[0];
-                                            const overlapStart = Math.max(af.start, pStart);
-                                            const overlapEnd = Math.min(af.end, pEnd);
-
-                                            if (overlapEnd > overlapStart) {
-                                                const dur = overlapEnd - overlapStart;
-
-                                                if (afColIdx === colIdx - 1) {
-                                                    if (afName === cgA.name) aLeft += dur * 10;
-                                                    else aLeft += dur;
-                                                    if (afName === cgB.name) bLeft += dur * 10;
-                                                    else bLeft += dur;
-                                                } else if (afColIdx === colIdx + 1) {
-                                                    if (afName === cgA.name) aRight += dur * 10;
-                                                    else aRight += dur;
-                                                    if (afName === cgB.name) bRight += dur * 10;
-                                                    else bRight += dur;
-                                                }
-                                            }
-                                        });
-
-                                        return (aRight - aLeft) - (bRight - bLeft);
-                                    });
+                                    left = slotIdx * width;
                                 }
-
-
+                            } else {
+                                // 如果 layout 里没找到该政权 (可能是数据不一致)，
+                                // 策略 A: 隐藏 (width=0)
+                                // 策略 B: 全宽显示 (width=100) 并置顶
+                                // 这里采用策略 B 以免政权消失
+                                width = 100; left = 0;
                             }
 
-                            prevWidth = width;
-                            prevCount = activeFrags.length;
-                            activeFrags.forEach((frag, idx) => {
-                                const newFrag = Object.assign({}, frag);
-                                newFrag.displayStart = pStart; newFrag.displayEnd = pEnd;
-                                newFrag.leftPct = idx * width; newFrag.widthPct = width;
-                                newFrag.group.visualSlices.push({ cIdx: colIdx, start: pStart, end: pEnd, left: newFrag.leftPct / 100, w: newFrag.widthPct / 100, dur: pEnd - pStart });
-                                slices.push(newFrag);
+                            // 状态变更检测
+                            // [Fix] 使用 epsilon 比较浮点数
+                            const isChanged = Math.abs(left - currLeft) > 0.01 || Math.abs(width - currWidth) > 0.01;
 
+                            if (currLeft !== -1 && isChanged) {
+                                // 结束上一段
+                                pushSlice(slices, frag, currStart, y, currLeft, currWidth, colIdx);
+                                currStart = y;
+                            }
 
-
-                                // 更新位置缓存
-                                positionCache[frag.groupId] = {
-                                    leftPct: newFrag.leftPct,
-                                    width: width
-                                };
-                            });
-
-                            // [Fix] 缓存此时间段的排序结果
-                            const timeKey = `${pStart}-${pEnd}`;
-                            layoutCache[colIdx][timeKey] = activeFrags.map((f, idx) => ({
-                                groupId: f.groupId,
-                                position: idx
-                            }));
+                            if (currLeft === -1 || isChanged) {
+                                currLeft = left;
+                                currWidth = width;
+                            }
                         }
+
+                        // 结束最后一段
+                        if (currLeft !== -1) {
+                            pushSlice(slices, frag, currStart, end, currLeft, currWidth, colIdx);
+                        }
+                    });
+
+                    function pushSlice(outArr, originalFrag, s, e, l, w, cIdx) {
+                        if (s >= e) return;
+                        const newFrag = Object.assign({}, originalFrag);
+                        newFrag.displayStart = s;
+                        newFrag.displayEnd = e;
+                        newFrag.leftPct = l;
+                        newFrag.widthPct = w;
+
+                        // 更新 Group 统计信息
+                        newFrag.group.visualSlices.push({
+                            cIdx: cIdx,
+                            start: s, end: e,
+                            left: l / 100, w: w / 100,
+                            dur: e - s
+                        });
+
+                        outArr.push(newFrag);
                     }
+
                     return slices;
                 },
 
@@ -1594,8 +1751,22 @@
                         el.style.zIndex = 10;
                         el.__data__ = { group: slice.group, style: slice.style, fragment: slice };
 
-                        el.onmouseenter = () => { if (!Core.state.focusedGroupId) { document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.add('group-hovered')); if (Core.state.features.connections) Core.render.drawConnections(slice.group, '#fff'); } };
-                        el.onmouseleave = () => { if (!Core.state.focusedGroupId) { document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.remove('group-hovered')); document.getElementById('connections-layer').innerHTML = ''; } };
+                        el.onmouseenter = () => {
+                            if (!Core.state.focusedGroupId) {
+                                document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.add('group-hovered'));
+                                if (Core.state.features.connections) Core.render.drawConnections(slice.group, '#fff');
+                                // [New] Highlight Header based on this block's region
+                                if (slice.geoCode) Core.ui.highlightHeader(slice.geoCode);
+                            }
+                        };
+                        el.onmouseleave = () => {
+                            if (!Core.state.focusedGroupId) {
+                                document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.remove('group-hovered'));
+                                document.getElementById('connections-layer').innerHTML = '';
+                                // [New] Clear Header Highlight
+                                Core.ui.clearHeaderHighlight();
+                            }
+                        };
 
                         blocksFrag.appendChild(el);
                     });
@@ -1630,6 +1801,7 @@
                         oldItems.forEach(el => el.remove());
                     }
                     let colWidthPx = renderArea.scrollWidth / colCount;
+                    if (!colWidthPx || colWidthPx < 10) colWidthPx = 100; // [Fix] Prevent zero-width issues
 
                     let allLabels = [];
                     Core.state.regimeGroups.forEach(group => {
@@ -1939,6 +2111,28 @@
             },
 
             ui: {
+                // [New] Highlight Header based on Region Code
+                highlightHeader: function (geoCode) {
+                    if (!geoCode) return;
+                    const idx = Core.state.regionIndexMap[geoCode];
+                    if (idx !== undefined) {
+                        const headerBody = document.getElementById('header-body');
+                        if (headerBody && headerBody.children[idx]) {
+                            const target = headerBody.children[idx];
+                            const old = headerBody.querySelector('.active-header');
+                            if (old && old !== target) old.classList.remove('active-header');
+                            target.classList.add('active-header');
+                        }
+                    }
+                },
+                clearHeaderHighlight: function () {
+                    const headerBody = document.getElementById('header-body');
+                    if (headerBody) {
+                        const old = headerBody.querySelector('.active-header');
+                        if (old) old.classList.remove('active-header');
+                    }
+                },
+
                 closePanel: function () {
                     document.getElementById('editor-panel').classList.remove('panel-open');
                     Core.ui.clearFocus();

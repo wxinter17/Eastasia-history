@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Layout Optimizer - v09.00</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin
+        src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+    <style type="text/tailwindcss">
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.95);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; border: 1px solid #0f172a; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        .matrix-viewport {
+            position: relative; width: 100%; height: 100%; overflow: auto; background: #020617; isolation: isolate; 
+        }
+
+        .header-row {
+            position: sticky; top: 0; z-index: 50; display: flex; height: 36px; background: #1e293b; border-bottom: 1px solid #475569;
+        }
+
+        .header-cell {
+            flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #cbd5e1; border-right: 1px solid #334155; cursor: grab; background: #1e293b; padding: 0 4px; text-align: center; line-height: 1.2; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        }
+
+        .year-col-container {
+            position: sticky; left: 0; z-index: 40; width: 60px; background: #0f172a; border-right: 1px solid #334155;
+        }
+
+        .data-row {
+            position: absolute; display: flex; width: 100%; border-bottom: 1px solid #1e293b;
+        }
+
+        .data-cell {
+            flex-shrink: 0; display: flex; flex-direction: row; padding: 1px; gap: 1px; border-right: 1px solid rgba(255,255,255,0.05); overflow: hidden;
+        }
+
+        .regime-block {
+            flex: 1; height: 100%; border-radius: 1px; font-size: 10px; font-weight: 500; display: flex; align-items: center; justify-content: center; white-space: nowrap; overflow: hidden; text-shadow: 0 1px 2px rgba(0,0,0,0.9); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); cursor: help; color: #fff; transition: transform 0.1s;
+        }
+        .regime-block:hover { transform: scale(1.1); z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.6); }
+
+        .btn { @apply px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm; }
+        .btn-primary { @apply bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/20; }
+        .btn-accent { @apply bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/20; }
+        .btn-success { @apply bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20; }
+        .btn-purple { @apply bg-purple-600 hover:bg-purple-500 text-white shadow-purple-900/20; }
+        .btn-danger { @apply bg-rose-600 hover:bg-rose-500 text-white shadow-rose-900/20; }
+        .btn-dark { @apply bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600; }
+    </style>
+</head>
+
+<body>
+    <div id="root" class="h-screen w-screen flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+        const CONFIG = {
+            MIN_YEAR: -2070,
+            MAX_YEAR: 2025,
+            ROW_HEIGHT: 24,
+            COL_WIDTH: 100
+        };
+
+        // [New] 移植自 panorama.html 的高级颜色逻辑
+        const calcColor = (code) => {
+            if (!code) return '#334155';
+            const strCode = String(code);
+            let originDigit = '1';
+            let eraDigit = 4;
+            if (/^\d/.test(strCode)) {
+                originDigit = strCode.charAt(0);
+                eraDigit = 5;
+            } else {
+                originDigit = strCode.length >= 3 ? strCode.charAt(2) : '1';
+                eraDigit = parseInt(strCode.length >= 2 ? strCode.charAt(1) : '4') || 4;
+            }
+            const hueMap = { '1': 0, '5': 35, '6': 80, '2': 125, '3': 170, '7': 210, '8': 245, '4': 280, '9': 320, '0': 0 };
+            const baseHue = hueMap[originDigit] !== undefined ? hueMap[originDigit] : 0;
+
+            let hash = 0;
+            for (let i = 0; i < strCode.length; i++) hash = strCode.charCodeAt(i) + ((hash << 5) - hash);
+            hash = Math.abs(hash);
+
+            const hueShift = (hash % 2 === 0) ? -6 : 6;
+            let h = baseHue + hueShift;
+            let l = 30 + (eraDigit * 5.0);
+            l = Math.max(35, Math.min(65, l)); // 稍微提亮一点适应深色背景
+            const baseSat = 45 + (eraDigit * 5);
+            const satJitter = (hash % 16) - 8;
+            let s = Math.max(30, Math.min(95, baseSat + satJitter));
+
+            if (originDigit === '0') return `hsl(0, 0%, ${l}%)`;
+            if (originDigit === '6') { l -= 10; s -= 5; }
+
+            return `hsl(${h}, ${s}%, ${l}%)`;
+        };
+
+        // [New] 简易 Hash 函数
+        const simpleHash = (str) => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h) + str.charCodeAt(i); return (h >>> 0).toString(36); };
+
+        // --- 算法 1: 究极 TSP 列排序 (带防退化机制) ---
+        class AdvancedColumnSorter {
+            constructor(ids, grid, names, onLog) {
+                this.ids = ids; this.grid = grid; this.names = names; this.onLog = onLog; this.matrix = null;
+            }
+            async precompute() {
+                const n = this.ids.length;
+                this.matrix = Array(n).fill(0).map(() => Array(n).fill(0));
+                let ops = 0;
+                for (let i = 0; i < n; i++) {
+                    for (let j = i + 1; j < n; j++) {
+                        let score = 0;
+                        const rA = this.ids[i], rB = this.ids[j];
+                        for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                            const setA = this.grid[rA]?.[y];
+                            const setB = this.grid[rB]?.[y];
+                            if (setA && setB) {
+                                let common = 0;
+                                setA.forEach(r => { if (setB.has(r)) common++; });
+                                if (common > 0) {
+                                    // [Optimized] 复杂度惩罚：如果两列在某年都是多政权并立 (High Entropy)，则降低其亲和度权重
+                                    // 因为多政权并立时，内部排序很难保证两列的共有政权一定能紧邻，故其连接价值打折
+                                    const nA = setA.size;
+                                    const nB = setB.size;
+                                    const complexityFactor = 2.0 / (nA + nB); // 1vs1=1.0, 1vs2=0.66, 2vs2=0.5
+                                    score += (common * 10 * complexityFactor);
+                                }
+                            }
+                        }
+                        this.matrix[i][j] = this.matrix[j][i] = score;
+                        ops++; if (ops % 500 === 0) await new Promise(r => setTimeout(r, 0));
+                    }
+                }
+            }
+            getPathScore(path) {
+                let score = 0;
+                const n = path.length;
+                for (let i = 0; i < n - 1; i++) score += this.matrix[path[i]][path[i + 1]];
+                return score;
+            }
+            async greedyInit() {
+                const n = this.ids.length;
+                let bestPath = null, bestScore = -1;
+                // 暴力尝试以每个点为起点
+                for (let startNode = 0; startNode < n; startNode++) {
+                    const visited = new Set([startNode]);
+                    const path = [startNode];
+                    let current = startNode;
+                    while (path.length < n) {
+                        let bestNext = -1, maxSim = -1;
+                        for (let candidate = 0; candidate < n; candidate++) {
+                            if (!visited.has(candidate)) {
+                                const sim = this.matrix[current][candidate];
+                                if (sim > maxSim) { maxSim = sim; bestNext = candidate; }
+                            }
+                        }
+                        if (bestNext === -1) for (let k = 0; k < n; k++) if (!visited.has(k)) { bestNext = k; break; }
+                        visited.add(bestNext); path.push(bestNext); current = bestNext;
+                    }
+                    const s = this.getPathScore(path);
+                    if (s > bestScore) { bestScore = s; bestPath = path; }
+                    if (startNode % 5 === 0) await new Promise(r => setTimeout(r, 0));
+                }
+                return { path: bestPath, score: bestScore };
+            }
+            // [Manual Action Required] Replace the entire run() method with this:
+            async run(iterations = 50000000, updateCallback, stopRef) {
+                this.onLog("TSP: 多点贪婪初始化...");
+                const init = await this.greedyInit();
+                let currentPath = [...init.path];
+                let currentScore = init.score;
+                let bestPath = [...currentPath];
+                let bestScore = currentScore;
+                // SA 参数调优：极大迭代次数 + 极慢冷却
+                let temp = 5000;
+                const cooling = 0.99999;
+                let lastImprovement = 0;
+                const n = this.ids.length;
+
+                // 性能优化：减少 now() 调用
+                let lastYieldTime = Date.now();
+                for (let i = 0; i < iterations; i++) {
+                    if (stopRef.current) break;
+                    // 策略选择: 80% 2-Opt (区间翻转), 10% Swap (点交换), 10% Insert (点插入)
+                    const moveType = Math.random();
+                    let newPath = [...currentPath];
+                    let delta = 0;
+
+                    if (moveType < 0.8) {
+                        // === 2-Opt (Reverse Segment) ===
+                        const idx1 = Math.floor(Math.random() * n);
+                        const idx2 = Math.floor(Math.random() * n);
+                        const s = Math.min(idx1, idx2), e = Math.max(idx1, idx2);
+                        if (s === e) continue;
+                        const nA = s > 0 ? currentPath[s - 1] : -1, nB = currentPath[s];
+                        const nC = currentPath[e], nD = e < n - 1 ? currentPath[e + 1] : -1;
+                        let oldSim = 0; if (nA !== -1) oldSim += this.matrix[nA][nB]; if (nD !== -1) oldSim += this.matrix[nC][nD];
+                        let newSim = 0; if (nA !== -1) newSim += this.matrix[nA][nC]; if (nD !== -1) newSim += this.matrix[nB][nD];
+                        delta = newSim - oldSim;
+                        if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                            let l = s, r = e;
+                            while (l < r) { [currentPath[l], currentPath[r]] = [currentPath[r], currentPath[l]]; l++; r--; }
+                            currentScore += delta;
+                        }
+                    } else if (moveType < 0.9) {
+                        // === Swap (Two nodes) ===
+                        const idx1 = Math.floor(Math.random() * n);
+                        const idx2 = Math.floor(Math.random() * n);
+                        if (idx1 === idx2) continue;
+
+                        [newPath[idx1], newPath[idx2]] = [newPath[idx2], newPath[idx1]];
+                        const newScore = this.getPathScore(newPath); // 全量重算
+                        delta = newScore - currentScore;
+                        if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                            currentPath = newPath;
+                            currentScore = newScore;
+                        }
+                    } else {
+                        // === Insert (Move one node to another place) ===
+                        const from = Math.floor(Math.random() * n);
+                        const to = Math.floor(Math.random() * n);
+                        if (from === to) continue;
+                        const [node] = newPath.splice(from, 1);
+                        newPath.splice(to, 0, node);
+                        const newScore = this.getPathScore(newPath); // 全量重算
+                        delta = newScore - currentScore;
+                        if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                            currentPath = newPath;
+                            currentScore = newScore;
+                        }
+                    }
+                    // 更新最优解
+                    if (currentScore > bestScore) {
+                        bestScore = currentScore;
+                        bestPath = [...currentPath];
+                        lastImprovement = i;
+                        // 节流回调，且只在真正突破时尽量更新
+                        if (updateCallback && (i % 500 === 0)) updateCallback(null, bestScore);
+                    }
+                    // 冷却与回火 (Reheating)
+                    if (i % 1000 === 0) temp *= cooling;
+
+                    // 如果 1,000,000 次没有提升，且温度过低，则回火
+                    if (i - lastImprovement > 1000000 && temp < 50) {
+                        temp = 2000 + Math.random() * 1000; // 猛火加热
+                        currentPath = [...bestPath]; // 回退到最优
+                        currentScore = bestScore;
+                        lastImprovement = i;
+                        this.onLog(`[Reheat] 深度震荡... (Iter ${i})`);
+                    }
+                    // 批量 Yield，保证 UI 响应但不过度拖慢 (每 50ms 一次)
+                    if (i % 10000 === 0) {
+                        const now = Date.now();
+                        if (now - lastYieldTime > 50) { // Time Slice
+                            this.onLog(`TSP Iter ${(i / 1000000).toFixed(2)}M: Temp ${temp.toFixed(1)} | Best ${bestScore}`);
+                            if (updateCallback) updateCallback(null, bestScore);
+                            await new Promise(r => setTimeout(r, 0));
+                            lastYieldTime = Date.now();
+                        }
+                    }
+                }
+                // Post-Processing: 强制地理定向 (北海道/日本 -> 右侧)
+                // 相比于并在 Score 里加 Bias，事后翻转更稳健
+                if (this.names) {
+                    const eastKeywords = ['hokkaido', '北海道', 'japan', '日本', 'nihon'];
+                    let eastIndexSum = 0;
+                    let eastCount = 0;
+
+                    bestPath.forEach((idx, pos) => {
+                        const id = this.ids[idx];
+                        const name = (this.names[id] || id).toLowerCase();
+                        if (eastKeywords.some(k => name.includes(k))) {
+                            eastIndexSum += pos;
+                            eastCount++;
+                        }
+                    });
+
+                    if (eastCount > 0) {
+                        const avgPos = eastIndexSum / eastCount;
+                        if (avgPos < n / 2) {
+                            this.onLog(`地理修正: 检测到东方板块在左侧 (AvgPos ${avgPos.toFixed(1)} < ${n / 2})，执行自动翻转...`);
+                            bestPath.reverse();
+                        } else {
+                            this.onLog(`地理修正: 东方板块位置正确 (AvgPos ${avgPos.toFixed(1)})。`);
+                        }
+                    }
+                }
+
+                return { path: bestPath.map(idx => this.ids[idx]), score: bestScore };
+            }
+        }
+
+        // --- 算法 2: 全局主序优化器 (含 Stop 功能) ---
+        class GlobalSequenceOptimizer {
+            constructor(colOrder, grid, onLog) {
+                this.cols = colOrder;
+                this.grid = grid;
+                this.onLog = onLog;
+                this.masterSeqs = {};
+                this.activeSets = {};
+            }
+
+            init(existingMasterSeqs = null) {
+                this.cols.forEach(id => {
+                    this.activeSets[id] = {};
+                    const regimeFirstSeen = {};
+                    const regimes = new Set();
+
+                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                        const set = this.grid[id]?.[y];
+                        if (set) {
+                            this.activeSets[id][y] = set;
+                            set.forEach(r => {
+                                regimes.add(r);
+                                if (!regimeFirstSeen[r]) regimeFirstSeen[r] = y;
+                            });
+                        }
+                    }
+
+                    // 如果有现成的主序，尽量沿用
+                    if (existingMasterSeqs && existingMasterSeqs[id]) {
+                        // 过滤掉当前数据中不存在的，补充新的
+                        const oldSeq = existingMasterSeqs[id];
+                        const newSeq = oldSeq.map(r => {
+                            // [Migration] 尝试迁移旧的 ID 格式 (- -> |)
+                            if (regimes.has(r)) return r;
+                            const migrated = r.replace('-', '|');
+                            if (regimes.has(migrated)) return migrated;
+                            return null;
+                        }).filter(r => r !== null);
+
+                        const newSet = new Set(newSeq);
+                        const newItems = Array.from(regimes).filter(r => !newSet.has(r));
+                        this.masterSeqs[id] = [...newSeq, ...newItems];
+                    } else {
+                        // [Optimized] 改为随机初始化 (Random Shuffle)，消除“先来后到”的时间偏见
+                        // 结合 High Temp SA，这能让算法探索到 [宋, 徐] 这种非时间序但结构更优的解
+                        this.masterSeqs[id] = Array.from(regimes).sort(() => Math.random() - 0.5);
+                    }
+                });
+            }
+
+            calculateGlobalScore(currentSeqs) {
+                let score = 0;
+                for (let c = 0; c < this.cols.length - 1; c++) {
+                    const idA = this.cols[c];
+                    const idB = this.cols[c + 1];
+                    const seqA = currentSeqs[idA];
+                    const seqB = currentSeqs[idB];
+
+                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y += 5) {
+                        const setA = this.activeSets[idA][y];
+                        const setB = this.activeSets[idB][y];
+                        if (setA && setB) {
+                            const layoutA = seqA.filter(r => setA.has(r));
+                            const layoutB = seqB.filter(r => setB.has(r));
+                            if (layoutA.length > 0 && layoutB.length > 0) {
+                                // [Optimized] 大幅增加对齐奖励，强迫算法寻找能够连通的序列 (例如打破时间序 [徐,宋,吴] -> [宋,徐,吴])
+                                if (layoutA[layoutA.length - 1] === layoutB[0]) score += 1000;
+                            }
+                        }
+                    }
+                }
+                return score;
+            }
+
+            async run(iterations = 500000, updateCallback, stopRef, existingMasterSeqs = null) {
+                this.init(existingMasterSeqs);
+                this.onLog("SeqOpt: 主序初始化完成，开始全局优化 (High Temp)...");
+
+                let currentSeqs = JSON.parse(JSON.stringify(this.masterSeqs));
+                let currentScore = this.calculateGlobalScore(currentSeqs);
+                let bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                let bestScore = currentScore;
+
+                // [Optimized] 升温猛火：允许更大的结构性变动
+                let temp = 500.0;
+                const cooling = 0.9995;
+
+                for (let i = 0; i < iterations; i++) {
+                    if (stopRef.current) break;
+
+                    const randColIdx = Math.floor(Math.random() * this.cols.length);
+                    const colId = this.cols[randColIdx];
+                    const seq = currentSeqs[colId];
+                    if (seq.length < 2) continue;
+
+                    const idx1 = Math.floor(Math.random() * seq.length);
+                    const idx2 = Math.floor(Math.random() * seq.length);
+                    if (idx1 === idx2) continue;
+
+                    const r1 = seq[idx1];
+                    const r2 = seq[idx2];
+                    seq[idx1] = r2;
+                    seq[idx2] = r1;
+
+                    const newScore = this.calculateGlobalScore(currentSeqs);
+                    const delta = newScore - currentScore;
+
+                    if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                        currentScore = newScore;
+                        if (currentScore > bestScore) {
+                            bestScore = currentScore;
+                            bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                        }
+                    } else {
+                        seq[idx1] = r1;
+                        seq[idx2] = r2;
+                    }
+
+                    if (i % 500 === 0) temp *= cooling;
+
+                    if (i % 5000 === 0) {
+                        this.onLog(`SeqOpt Iter ${i}: Temp ${temp.toFixed(1)} | Score ${bestScore}`);
+                        if (updateCallback) {
+                            const layout = this.generateLayout(bestSeqs);
+                            updateCallback(layout, bestScore);
+                        }
+                        await new Promise(r => setTimeout(r, 0));
+                    }
+                }
+
+                this.masterSeqs = bestSeqs; // 更新内部状态
+                return { layout: this.generateLayout(bestSeqs), score: bestScore };
+            }
+
+            generateLayout(seqs) {
+                const layout = {};
+                this.cols.forEach(id => {
+                    layout[id] = {};
+                    const master = seqs[id];
+                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                        const set = this.activeSets[id][y];
+                        if (set) layout[id][y] = master.filter(r => set.has(r));
+                        else layout[id][y] = [];
+                    }
+                });
+                return layout;
+            }
+        }
+
+        // --- App ---
+        function App() {
+            const [data, setData] = useState(null);
+            const [colOrder, setColOrder] = useState([]);
+            const [cellLayout, setCellLayout] = useState({});
+            const [masterSeqs, setMasterSeqs] = useState(null); // 存储主序列表
+
+            const [status, setStatus] = useState('idle');
+            const [tspBestScore, setTspBestScore] = useState(0); // 记录 TSP 历史最高分
+            const [logs, setLogs] = useState(['等待 CSV...']);
+            const [isFlipped, setIsFlipped] = useState(false); // [New] 翻转状态
+            const [layoutScore, setLayoutScore] = useState(0); // [New] 布局分数
+            const [draggedCol, setDraggedCol] = useState(null); // [New] 拖拽列索引
+            const [dataHash, setDataHash] = useState(null); // [New] 数据指纹
+
+            const fileInputRef = useRef();
+            const logEndRef = useRef();
+            const gridRef = useRef();
+            const stopRef = useRef(false);
+            const [scrollTop, setScrollTop] = useState(0);
+            const [viewportH, setViewportH] = useState(800);
+
+            const addLog = (msg) => setLogs(prev => [...prev.slice(-49), `> ${msg}`]);
+            useEffect(() => { if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [logs]);
+
+            // [New] 核心数据解析 (复用逻辑)
+            // preloadedColOrder: 从 layout.json 预加载的顺序，用于解决 React State 异步更新导致的“恢复失败”问题
+            // preloadedMasterSeqs: [New] 预加载的主序模具
+            // [New] Quick Score Calculation
+            const calculateQuickScores = async (gridData, orderData, seqsData) => {
+                if (!gridData || !orderData) return;
+                try {
+                    const sorter = new AdvancedColumnSorter(orderData, gridData, {}, () => { });
+                    await sorter.precompute(); // Recalculate affinity matrix
+                    const path = orderData.map((_, i) => i);
+                    const tScore = sorter.getPathScore(path);
+                    setTspBestScore(Math.floor(tScore));
+                } catch (e) { console.warn("Quick TSP Calc failed", e); }
+
+                if (seqsData) {
+                    try {
+                        const optimizer = new GlobalSequenceOptimizer(orderData, gridData, () => { });
+                        optimizer.init(seqsData);
+                        const lScore = optimizer.calculateGlobalScore(seqsData);
+                        setLayoutScore(Math.floor(lScore));
+                    } catch (e) { console.warn("Quick LAY Calc failed", e); }
+                } else {
+                    setLayoutScore(0);
+                }
+            };
+
+            const parseContent = (content, isJSON, preloadedColOrder = null, preloadedMasterSeqs = null) => {
+                if (isJSON) {
+                    try {
+                        const json = JSON.parse(content);
+                        if (json.colOrder) { setColOrder(json.colOrder); addLog("已恢复列顺序模具。"); }
+                        if (json.masterSeqs) { setMasterSeqs(json.masterSeqs); addLog("已恢复主序列表模具。"); }
+                        return json; // 返回供链式调用
+                    } catch (err) { alert("JSON Error"); }
+                } else {
+                    setDataHash(simpleHash(content)); // [New] 计算数据 Hash
+                    const lines = content.split(/\r?\n/).filter(l => l.trim());
+                    const headers = lines[0].toLowerCase().split(',');
+                    const findCol = (keys) => headers.findIndex(h => keys.some(k => h.includes(k)));
+                    const idx = {
+                        geoCode: findCol(['geo_code', 'region_code']),
+                        geoName: findCol(['geo_name', 'region_name']),
+                        start: findCol(['start']),
+                        end: findCol(['end']),
+                        regimeName: findCol(['regime_name', 'polity_name']),
+                        regimeCode: findCol(['regime_code', 'polity_code'])
+                    };
+                    if (idx.geoName === -1) idx.geoName = idx.geoCode;
+                    if (idx.regimeName === -1) idx.regimeName = idx.regimeCode;
+                    if (idx.geoCode === -1 || idx.start === -1) { alert("CSV Error: Missing columns"); return; }
+
+                    const regions = new Set();
+                    const grid = {};
+                    const regionNames = {};
+
+                    for (let i = 1; i < lines.length; i++) {
+                        const row = lines[i].split(',').map(s => s.trim().replace(/^"|"$/g, ''));
+                        if (row.length < 4) continue;
+                        const geoCode = row[idx.geoCode];
+                        const geoName = row[idx.geoName] || geoCode;
+                        const start = parseInt(row[idx.start]);
+                        let end = row[idx.end];
+                        end = (end === '' || end.toLowerCase().includes('present')) ? CONFIG.MAX_YEAR : parseInt(end);
+                        const regimeName = row[idx.regimeName];
+                        const regimeCode = row[idx.regimeCode] || regimeName; // 获取 Code
+
+                        if (!geoCode || isNaN(start)) continue;
+                        regions.add(geoCode);
+                        regionNames[geoCode] = geoName;
+                        // [New] 存储映射
+                        if (!regionNames._codes) regionNames._codes = {};
+                        regionNames._codes[regimeName] = regimeCode;
+
+                        if (!grid[geoCode]) grid[geoCode] = {};
+                        let loopEnd = (start === end) ? start : end - 1;
+                        for (let y = start; y <= loopEnd; y++) {
+                            if (y >= CONFIG.MIN_YEAR && y <= CONFIG.MAX_YEAR) {
+                                if (!grid[geoCode][y]) grid[geoCode][y] = new Set();
+                                // [Fix] ID 策略：Name + Code (确保跨时间段的政权同一性)
+                                grid[geoCode][y].add(regimeName + "|" + regimeCode);
+                            }
+                        }
+                    }
+
+                    const regionList = Array.from(regions).sort();
+                    // 这里名字复用 regionNames 对象存 code map，稍微有点所谓，但可以用 ._codes 访问
+                    setData({ regions: regionList, grid, names: regionNames, codes: regionNames._codes });
+
+                    // 关键修复：优先使用传入的预加载顺序，否则才用 State
+                    const currentOrder = preloadedColOrder || colOrder;
+                    // [New] 关键修复：优先使用传入的主序模具，否则才用 State
+                    const currentMasterSeqs = preloadedMasterSeqs || masterSeqs;
+
+                    const newRegionSet = new Set(regionList);
+                    const oldRegionSet = new Set(currentOrder);
+
+                    // 校验逻辑：只有当两个集合元素完全一致时，才保留布局
+                    const isSameRegions = currentOrder.length > 0 &&
+                        newRegionSet.size === oldRegionSet.size &&
+                        [...newRegionSet].every(x => oldRegionSet.has(x));
+
+                    if (isSameRegions) {
+                        addLog("检测到地区一致，保留现有列顺序模具。");
+                        // 既然一致，就强制应用这个顺序 (因为如果用了 preloadedColOrder，state 可能还没更)
+                        if (preloadedColOrder) setColOrder(preloadedColOrder);
+
+                        if (currentMasterSeqs) {
+                            addLog("尝试应用现有主序列表到新数据...");
+                            const sorter = new GlobalSequenceOptimizer(currentOrder, grid, () => { });
+                            sorter.masterSeqs = currentMasterSeqs;
+                            sorter.init(currentMasterSeqs);
+                            setMasterSeqs(sorter.masterSeqs); // [Fix] 更新 State 为迁移后的新数据 (确保 SaveToDB 正确)
+                            const newLayout = sorter.generateLayout(sorter.masterSeqs);
+                            setCellLayout(newLayout);
+                        } else {
+                            const initLayout = {};
+                            currentOrder.forEach(id => {
+                                initLayout[id] = {};
+                                for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                                    const s = grid[id][y];
+                                    initLayout[id][y] = s ? Array.from(s).sort() : [];
+                                }
+                            });
+                            setCellLayout(initLayout);
+                        }
+                    } else {
+                        addLog("地区模具不匹配 (数量/ID差异)，重置布局。");
+                        setColOrder(regionList);
+                        setMasterSeqs(null);
+                        setTspBestScore(0);
+                        const initLayout = {};
+                        regionList.forEach(id => {
+                            initLayout[id] = {};
+                            for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                                const s = grid[id][y];
+                                initLayout[id][y] = s ? Array.from(s).sort() : [];
+                            }
+                        });
+                        setCellLayout(initLayout);
+                    }
+                    const finalOrder = isSameRegions ? (preloadedColOrder || currentOrder) : regionList;
+                    const finalSeqs = isSameRegions ? currentMasterSeqs : null;
+
+                    // [New] Calc Scores
+                    calculateQuickScores(grid, finalOrder, finalSeqs);
+
+                    setStatus('ready');
+                }
+            };
+
+            const handleFile = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => parseContent(evt.target.result, file.name.endsWith('.json'));
+                reader.readAsText(file);
+                e.target.value = '';
+            };
+
+            // [New] 加载远程 CSV
+            const loadRemoteCSV = async (url = null, preloadedColOrder = null, preloadedMasterSeqs = null) => {
+                const GOOGLE_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSMSHMYH-_pI-2v9bqP-1Balz19zzjAW9QyykU5D1GsfnGVV4Xt-OwPjOlFKPwQL2rQ9EVGCgl7ikCs/pub?gid=0&single=true&output=csv";
+                const LOCAL_CSV = "history_data.csv";
+
+                let targetUrl = url || GOOGLE_CSV;
+                addLog(`正在尝试加载数据: ${targetUrl}...`);
+
+                const tryFetch = async (u) => {
+                    // 添加时间戳防缓存
+                    const fetchUrl = u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
+                    const res = await fetch(fetchUrl);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    return await res.text();
+                };
+
+                try {
+                    const text = await tryFetch(targetUrl);
+                    addLog("数据下载完成，开始解析...");
+                    parseContent(text, false, preloadedColOrder, preloadedMasterSeqs);
+                } catch (e) {
+                    addLog(`加载失败 (${targetUrl}): ${e.message}`);
+                    if (!url && targetUrl === GOOGLE_CSV) {
+                        addLog(`正在尝试降级加载本地文件: ${LOCAL_CSV}...`);
+                        try {
+                            const localText = await tryFetch(LOCAL_CSV);
+                            addLog("本地数据下载完成，开始解析...");
+                            parseContent(localText, false, preloadedColOrder, preloadedMasterSeqs);
+                        } catch (e2) {
+                            addLog(`本地加载也失败了: ${e2.message}`);
+                            alert(`无法加载云端或本地数据，请检查网络或手动上传。`);
+                        }
+                    } else {
+                        alert(`无法加载 ${targetUrl}: ${e.message}`);
+                    }
+                }
+            };
+
+            // [New] 自动运行逻辑
+            useEffect(() => {
+                const params = new URLSearchParams(window.location.search);
+                const csvUrl = params.get('csv');
+                const autorun = params.get('autorun');
+
+                let loadedLayout = null;
+
+                // 1. 总是尝试加载 layout.json 以恢复模具 (Column Order)
+                fetch('layout.json?t=' + Date.now())
+                    .then(res => {
+                        if (res.ok) return res.text();
+                        throw new Error('No layout.json');
+                    })
+                    .then(text => {
+                        addLog("发现 layout.json，正在恢复列顺序模具...");
+                        // 解析并保存，但不依赖 State
+                        loadedLayout = parseContent(text, true);
+                    })
+                    .catch(() => addLog("未找到 layout.json 或加载失败，将使用默认或新生成的布局。"))
+                    .finally(() => {
+                        const preloadedOrder = loadedLayout ? loadedLayout.colOrder : null;
+                        const preloadedSeqs = loadedLayout ? loadedLayout.masterSeqs : null;
+
+                        // 2. 加载数据 (CSV)
+                        if (csvUrl) {
+                            loadRemoteCSV(csvUrl, preloadedOrder, preloadedSeqs);
+                        } else if (autorun === 'true') {
+                            // 不传参，使用 loadRemoteCSV 内部定义的默认逻辑 (Google -> history_data.csv)
+                            loadRemoteCSV(null, preloadedOrder, preloadedSeqs);
+                        }
+                    });
+            }, []);
+
+            const handleStop = () => {
+                stopRef.current = true;
+                addLog("用户请求停止...");
+            };
+
+
+
+            const runColumnOptimizer = async () => {
+                if (!data) return;
+                setStatus('ranking');
+                stopRef.current = false;
+                addLog("=== 步骤 1: 高级列排序 (TSP Deep Search) ===");
+                addLog("正在预计算亲和度矩阵 (含地理偏好)...");
+                const sorter = new AdvancedColumnSorter(data.regions, data.grid, data.names, addLog);
+                await sorter.precompute();
+
+                addLog("开始 SA + 2-Opt 深度搜索 (Max 50M Iters)...");
+                // 运行算法，传入回调实时更新分数 (仅当超越历史最高分时更新 UI)
+                const result = await sorter.run(50000000, (_, score) => {
+                    if (score > tspBestScore) setTspBestScore(score);
+                }, stopRef);
+
+                // 防退化检查
+                if (result.score > tspBestScore) {
+                    addLog(`新纪录！Score: ${result.score} (旧: ${tspBestScore})`);
+                    setTspBestScore(result.score);
+                    setColOrder(result.path);
+                } else {
+                    addLog(`未发现更优解 (Current: ${result.score} vs Best: ${tspBestScore})。保持原样。`);
+                }
+
+                addLog("列排序步骤结束。");
+                setStatus('ready');
+            };
+
+            const runCellOptimizer = async () => {
+                if (!data) return;
+                setStatus('layout');
+                stopRef.current = false;
+                addLog("=== 步骤 2: 全局序列对齐 (Master Sequence) ===");
+                addLog("构建永恒政权序列，确保绝对继承与反向传播...");
+
+                const sorter = new GlobalSequenceOptimizer(colOrder, data.grid, addLog);
+
+                // 传入回调，同时更新 Layout 和 Score
+                const result = await sorter.run(
+                    500000,
+                    (layout, score) => {
+                        setCellLayout(layout);
+                        if (score !== undefined) setLayoutScore(score);
+                    },
+                    stopRef,
+                    null // [Fix] 强制传入 null，忽略已加载的旧顺序 (masterSeqs)，确保每次都从随机洗牌开始，彻底消除先入为主的偏见
+                );
+
+                setMasterSeqs(sorter.masterSeqs);
+                setCellLayout(result.layout);
+                setLayoutScore(result.score); // 使用真实最终得分
+                addLog(`所有优化完成。最终 LayScore: ${result.score}`);
+                setStatus('done');
+            };
+
+            const handleFlip = () => {
+                const newFlipped = !isFlipped;
+                setIsFlipped(newFlipped);
+
+                // 1. 翻转列顺序
+                setColOrder(prev => [...prev].reverse());
+
+                // 2. 翻转单元格内顺序
+                setCellLayout(prev => {
+                    const next = {};
+                    Object.keys(prev).forEach(id => {
+                        next[id] = {};
+                        Object.keys(prev[id]).forEach(y => {
+                            next[id][y] = [...prev[id][y]].reverse();
+                        });
+                    });
+                    return next;
+                });
+                addLog(`布局已${newFlipped ? '翻转' : '还原'} (North/South)`);
+            };
+
+            // [New] 拖拽处理
+            const handleDragStart = (e, index) => {
+                setDraggedCol(index);
+                e.dataTransfer.effectAllowed = "move";
+            };
+
+            const handleDragOver = (e, index) => {
+                e.preventDefault(); // 允许 Drop
+                if (draggedCol === null || draggedCol === index) return;
+            };
+
+            const handleDrop = (e, targetIndex) => {
+                e.preventDefault();
+                if (draggedCol === null || draggedCol === targetIndex) return;
+
+                const newOrder = [...colOrder];
+                const [removed] = newOrder.splice(draggedCol, 1);
+                newOrder.splice(targetIndex, 0, removed);
+
+                setColOrder(newOrder);
+                setDraggedCol(null);
+                addLog(`列已手动重排: ${data.names[removed] || removed} -> Position ${targetIndex}`);
+            };
+
+            const totalYears = CONFIG.MAX_YEAR - CONFIG.MIN_YEAR + 1;
+            const totalH = totalYears * CONFIG.ROW_HEIGHT;
+            const startIdx = Math.floor(scrollTop / CONFIG.ROW_HEIGHT);
+            const endIdx = Math.min(totalYears, startIdx + Math.ceil(viewportH / CONFIG.ROW_HEIGHT) + 2);
+            const visibleYears = [];
+            for (let i = startIdx; i < endIdx; i++) visibleYears.push(CONFIG.MIN_YEAR + i);
+
+            const exportJSON = () => {
+                const out = {
+                    colOrder,
+                    layout: cellLayout,
+                    names: data.names,
+                    masterSeqs: masterSeqs, // 导出模具
+                    tspScore: tspBestScore
+                };
+                const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'layout.json'; a.click();
+            };
+
+            const saveToDB = () => {
+                if (!data) return;
+                const out = {
+                    colOrder,
+                    layout: cellLayout,
+                    names: data.names,
+                    masterSeqs: masterSeqs,
+                    tspScore: tspBestScore,
+                    dataHash: dataHash, // [New] 存储指纹
+                    timestamp: Date.now()
+                };
+
+                // [Fix] Remove hardcoded version to allow opening any existing version
+                const request = indexedDB.open("EastAsiaHistoryDB");
+
+                request.onupgradeneeded = function (event) {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains("layouts")) {
+                        db.createObjectStore("layouts", { keyPath: "id" });
+                    }
+                };
+
+                request.onsuccess = function (event) {
+                    const db = event.target.result;
+                    const transaction = db.transaction(["layouts"], "readwrite");
+                    const store = transaction.objectStore("layouts");
+
+                    // 使用固定 ID "current" 以便覆盖更新
+                    const putReq = store.put({ id: "current", data: out });
+
+                    putReq.onsuccess = function () {
+                        addLog("布局数据已写入 IndexedDB (EastAsiaHistoryDB/layouts/current)");
+                        alert("数据库写入成功！(请确保全景页已开启 DB 读取功能)");
+                    };
+
+                    putReq.onerror = function (e) {
+                        alert("IndexedDB 写入失败: " + e.target.error);
+                    };
+                };
+
+                request.onerror = function (event) {
+                    alert("无法打开 IndexedDB: " + event.target.errorCode);
+                };
+            };
+
+            return (
+                <div className="h-full flex flex-col bg-slate-900 text-slate-200">
+                    <div className="glass-panel z-50 px-4 py-3 flex items-center justify-between shadow-xl relative backdrop-blur-md bg-opacity-90 border-b border-slate-700/50">
+                        {/* Left: Branding & Inputs */}
+                        <div className="flex items-center gap-4">
+                            <div className="flex flex-col leading-tight">
+                                <span className="font-bold text-lg text-slate-100 tracking-tight">Layout Optimizer</span>
+                                <span className="text-[10px] text-purple-400 font-mono">v09.00 INTELLIGENT</span>
+                            </div>
+                            <div className="h-8 w-px bg-slate-700/50 mx-2"></div>
+
+                            <div className="flex gap-2">
+                                <label className="btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/50 cursor-pointer">
+                                    <span className="opacity-80">📁 导入</span>
+                                    <input type="file" accept=".csv,.json" onChange={handleFile} className="hidden" ref={fileInputRef} />
+                                </label>
+                                <button onClick={() => loadRemoteCSV()} className="btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/50" title="Google Sheet / Local">
+                                    ☁️ 云端数据
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Center: Controls */}
+                        <div className="absolute left-1/2 -translate-x-1/2 flex gap-2">
+                            {status !== 'ranking' && status !== 'layout' ? (
+                                <>
+                                    <button onClick={runColumnOptimizer} className="btn bg-emerald-700 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 border border-emerald-600/50" disabled={!data}>
+                                        1. 优化列序
+                                    </button>
+                                    <button onClick={runCellOptimizer} className="btn bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20 border-0" disabled={!data}>
+                                        2. 优化布局
+                                    </button>
+                                </>
+                            ) : (
+                                <div className="flex gap-2 items-center bg-slate-800 rounded px-3 border border-slate-700">
+                                    <svg className="w-4 h-4 animate-spin text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                    <span className="text-xs font-mono text-blue-300">{status === 'ranking' ? 'TSP SOLVING...' : 'ALIGNING...'}</span>
+                                    <button onClick={handleStop} className="ml-2 text-xs text-red-400 hover:text-red-300">STOP</button>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Right: Actions & Score */}
+                        <div className="flex items-center gap-4">
+                            {/* Score Board */}
+                            <div className="flex flex-col items-end mr-2 font-mono text-[10px] text-slate-400 cursor-help" title="TSP: 邻接亲和力总分 (越高不仅代表相邻紧密，也代表历史连续性好)&#010;LAY: 全局对齐一致性分数 (越高代表政权继承关系越顺畅)">
+                                <div>TSP: <span className="text-emerald-400">{Math.round(tspBestScore).toLocaleString()}</span></div>
+                                <div>LAY: <span className="text-blue-400">{layoutScore > 0 ? Math.round(layoutScore).toLocaleString() : '-'}</span></div>
+                            </div>
+                            <div className="h-8 w-px bg-slate-700/50"></div>
+
+                            <div className="flex gap-2">
+                                <button onClick={saveToDB} className="btn bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/20 border-0" disabled={!data} title="保存到 IndexedDB 供全景图读取">
+                                    💾 写入 DB
+                                </button>
+                                <button onClick={exportJSON} className="btn bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600" disabled={!data} title="导出 JSON 模具">
+                                    📤 导出
+                                </button>
+                                <a href="index.html" className="btn bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600/50" title="返回首页">
+                                    🏠
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-hidden relative flex flex-col pt-[1px]">
+                        {data ? (
+                            <div
+                                className="matrix-viewport"
+                                onScroll={(e) => setScrollTop(e.target.scrollTop)}
+                                ref={(el) => { if (el) { gridRef.current = el; if (el.clientHeight !== viewportH) setViewportH(el.clientHeight); } }}
+                            >
+                                <div style={{ height: totalH, width: 60 + colOrder.length * CONFIG.COL_WIDTH, position: 'relative' }}>
+                                    <div className="header-row" style={{ width: '100%', minWidth: 'max-content' }}>
+                                        {/* Flip Button (Icon) */}
+                                        <div
+                                            className="header-cell sticky left-0 z-[60] w-[60px] bg-slate-800 border-r border-slate-600 text-slate-400 cursor-pointer hover:bg-slate-700 hover:text-emerald-400 transition-colors flex justify-center items-center"
+                                            onClick={handleFlip}
+                                            title="左右翻转布局 (Flip Horizontal)"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                            </svg>
+                                        </div>
+                                        {colOrder.map((id, index) => (
+                                            <div
+                                                key={id}
+                                                className={`header-cell ${draggedCol === index ? 'opacity-50 dashed-border' : ''} cursor-move hover:bg-slate-700 transition-colors select-none`}
+                                                style={{ width: CONFIG.COL_WIDTH }}
+                                                title={data.names[id] || id}
+                                                draggable
+                                                onDragStart={(e) => handleDragStart(e, index)}
+                                                onDragOver={(e) => handleDragOver(e, index)}
+                                                onDrop={(e) => handleDrop(e, index)}
+                                            >
+                                                {data.names[id] || id}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {visibleYears.map(year => (
+                                        <div key={year} className="data-row" style={{ top: (year - CONFIG.MIN_YEAR) * CONFIG.ROW_HEIGHT + 36, height: CONFIG.ROW_HEIGHT }}>
+                                            <div className="year-col-container flex items-center justify-center h-full">
+                                                <div className="font-mono text-[10px] text-slate-500">{year}</div>
+                                            </div>
+                                            {colOrder.map(id => {
+                                                const regimes = cellLayout[id]?.[year] || [];
+                                                return (
+                                                    <div key={id} className="data-cell" style={{ width: CONFIG.COL_WIDTH }}>
+                                                        {regimes.map(r => (
+                                                            <div key={r} className="regime-block"
+                                                                style={{ backgroundColor: calcColor(r.split('|')[1] || data.codes[r.split('|')[0]] || r) }}
+                                                                title={r}>
+                                                                {r.split('|')[0]}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 bg-slate-950">
+                                <p className="text-sm font-medium">请导入 CSV 数据文件 / JSON 模具</p>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="h-32 bg-slate-950 border-t border-slate-800 flex flex-col font-mono text-[10px] shadow-inner-lg z-50">
+                        <div className="px-4 py-1 bg-slate-900 border-b border-slate-800 text-slate-500 flex justify-between">
+                            <span>CONSOLE LOG</span>
+                            <span className={status === 'ranking' || status === 'layout' ? 'text-blue-400 animate-pulse' : 'text-emerald-500'}>
+                                {status === 'idle' ? 'IDLE' : status.toUpperCase()}
+                            </span>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2 space-y-1 text-slate-400">
+                            {logs.map((l, i) => (
+                                <div key={i} ref={i === logs.length - 1 ? logEndRef : null}>{l}</div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
