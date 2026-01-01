@@ -1194,9 +1194,9 @@
                     }
                 };
 
-                // 策略 1: 尝试读取 IndexedDB (移除版本号以自动匹配)
+                // 策略 1: 尝试读取 IndexedDB (更新版本号至 3 以匹配 LayoutOptimizer)
                 try {
-                    const req = indexedDB.open("EastAsiaHistoryDB");
+                    const req = indexedDB.open("EastAsiaHistoryDB", 3);
                     req.onerror = () => { console.warn("DB Open Failed"); loadFromMirror(); };
 
                     req.onsuccess = (e) => {

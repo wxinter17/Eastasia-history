@@ -2310,7 +2310,8 @@
                     console.log("[System] LocalStorage mirror updated.");
                 } catch (e) { console.warn("LS Backup Failed", e); }
 
-                const request = indexedDB.open("EastAsiaHistoryDB");
+                // [Fix] Explicitly use version 3 to trigger schema upgrade for users who possess legacy DB
+                const request = indexedDB.open("EastAsiaHistoryDB", 3);
 
                 request.onupgradeneeded = function (event) {
                     const db = event.target.result;
