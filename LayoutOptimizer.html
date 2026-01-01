@@ -1,0 +1,2600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Layout Optimizer - v09.00</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin
+        src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+    <style type="text/tailwindcss">
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.95);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; border: 1px solid #0f172a; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        .matrix-viewport {
+            position: relative; width: 100%; height: 100%; overflow: auto; background: #020617; isolation: isolate; 
+        }
+
+        .header-row {
+            position: sticky; top: 0; z-index: 50; display: flex; height: 36px; background: #1e293b; border-bottom: 1px solid #475569;
+        }
+
+        .header-cell {
+            flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #cbd5e1; border-right: 1px solid #334155; cursor: grab; background: #1e293b; padding: 0 4px; text-align: center; line-height: 1.2; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        }
+
+        .year-col-container {
+            position: sticky; left: 0; z-index: 40; width: 60px; background: #0f172a; border-right: 1px solid #334155;
+        }
+
+        .data-row {
+            position: absolute; display: flex; width: 100%; border-bottom: 1px solid #1e293b;
+        }
+
+        .data-cell {
+            flex-shrink: 0; display: flex; flex-direction: row; padding: 1px; gap: 1px; border-right: 1px solid rgba(255,255,255,0.05); overflow: hidden;
+        }
+
+        .regime-block {
+            flex: 1; height: 100%; border-radius: 1px; font-size: 10px; font-weight: 500; display: flex; align-items: center; justify-content: center; white-space: nowrap; overflow: hidden; text-shadow: 0 1px 2px rgba(0,0,0,0.9); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); cursor: help; color: #fff; transition: transform 0.1s;
+        }
+        .regime-block:hover { transform: scale(1.1); z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.6); }
+
+        .btn { @apply px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm; }
+        .btn-primary { @apply bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/20; }
+        .btn-accent { @apply bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/20; }
+        .btn-success { @apply bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20; }
+        .btn-purple { @apply bg-purple-600 hover:bg-purple-500 text-white shadow-purple-900/20; }
+        .btn-danger { @apply bg-rose-600 hover:bg-rose-500 text-white shadow-rose-900/20; }
+        .btn-dark { @apply bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600; }
+    </style>
+</head>
+
+<body>
+    <div id="root" class="h-screen w-screen flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+        const CONFIG = {
+            MIN_YEAR: -2070,
+            MAX_YEAR: 2025,
+            ROW_HEIGHT: 24,
+            COL_WIDTH: 100
+        };
+
+
+
+        // [New] 移植自 panorama.html 的高级颜色逻辑
+        const calcColor = (code) => {
+            if (!code) return '#334155';
+            const strCode = String(code);
+            let originDigit = '1';
+            let eraDigit = 4;
+            if (/^\d/.test(strCode)) {
+                originDigit = strCode.charAt(0);
+                eraDigit = 5;
+            } else {
+                originDigit = strCode.length >= 3 ? strCode.charAt(2) : '1';
+                eraDigit = parseInt(strCode.length >= 2 ? strCode.charAt(1) : '4') || 4;
+            }
+            const hueMap = { '1': 0, '5': 35, '6': 80, '2': 125, '3': 170, '7': 210, '8': 245, '4': 280, '9': 320, '0': 0 };
+            const baseHue = hueMap[originDigit] !== undefined ? hueMap[originDigit] : 0;
+
+            let hash = 0;
+            for (let i = 0; i < strCode.length; i++) hash = strCode.charCodeAt(i) + ((hash << 5) - hash);
+            hash = Math.abs(hash);
+
+            const hueShift = (hash % 2 === 0) ? -6 : 6;
+            let h = baseHue + hueShift;
+            let l = 30 + (eraDigit * 5.0);
+            l = Math.max(35, Math.min(65, l)); // 稍微提亮一点适应深色背景
+            const baseSat = 45 + (eraDigit * 5);
+            const satJitter = (hash % 16) - 8;
+            let s = Math.max(30, Math.min(95, baseSat + satJitter));
+
+            if (originDigit === '0') return `hsl(0, 0%, ${l}%)`;
+            if (originDigit === '6') { l -= 10; s -= 5; }
+
+            return `hsl(${h}, ${s}%, ${l}%)`;
+        };
+
+        // [New] 简易 Hash 函数
+        const simpleHash = (str) => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h) + str.charCodeAt(i); return (h >>> 0).toString(36); };
+
+        // --- 算法 1: 究极 TSP 列排序 (带防退化机制) ---
+        class AdvancedColumnSorter {
+            constructor(ids, grid, names, onLog, bonusMatrix = null) {
+                this.ids = ids; this.grid = grid; this.names = names; this.onLog = onLog;
+                this.matrix = null;
+                this.bonusMatrix = bonusMatrix; // [New] 用于注入视角偏好
+            }
+            async precompute() {
+                const n = this.ids.length;
+                this.matrix = Array(n).fill(0).map(() => Array(n).fill(0));
+                let ops = 0;
+                for (let i = 0; i < n; i++) {
+                    for (let j = i + 1; j < n; j++) {
+                        let score = 0;
+                        const rA = this.ids[i], rB = this.ids[j];
+
+                        // [New] 优先应用强绑定 Bonus
+                        if (this.bonusMatrix && this.bonusMatrix[i] && this.bonusMatrix[i][j]) {
+                            score += this.bonusMatrix[i][j];
+                        }
+
+                        for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                            const setA = this.grid[rA]?.[y];
+                            const setB = this.grid[rB]?.[y];
+                            if (setA && setB) {
+                                let common = 0;
+                                setA.forEach(r => { if (setB.has(r)) common++; });
+                                if (common > 0) {
+                                    const nA = setA.size;
+                                    const nB = setB.size;
+                                    const complexityFactor = 2.0 / (nA + nB);
+                                    score += (common * 10 * complexityFactor);
+                                }
+                            }
+                        }
+                        this.matrix[i][j] = this.matrix[j][i] = score;
+                        ops++; if (ops % 500 === 0) await new Promise(r => setTimeout(r, 0));
+                    }
+                }
+            }
+            getPathScore(path) {
+                let score = 0;
+                const n = path.length;
+                for (let i = 0; i < n - 1; i++) score += this.matrix[path[i]][path[i + 1]];
+                return score;
+            }
+            async greedyInit() {
+                const n = this.ids.length;
+                let bestPath = null, bestScore = -1;
+                // 暴力尝试以每个点为起点
+                for (let startNode = 0; startNode < n; startNode++) {
+                    const visited = new Set([startNode]);
+                    const path = [startNode];
+                    let current = startNode;
+                    while (path.length < n) {
+                        let bestNext = -1, maxSim = -1;
+                        for (let candidate = 0; candidate < n; candidate++) {
+                            if (!visited.has(candidate)) {
+                                const sim = this.matrix[current][candidate];
+                                if (sim > maxSim) { maxSim = sim; bestNext = candidate; }
+                            }
+                        }
+                        if (bestNext === -1) for (let k = 0; k < n; k++) if (!visited.has(k)) { bestNext = k; break; }
+                        visited.add(bestNext); path.push(bestNext); current = bestNext;
+                    }
+                    const s = this.getPathScore(path);
+                    if (s > bestScore) { bestScore = s; bestPath = path; }
+                    if (startNode % 5 === 0) await new Promise(r => setTimeout(r, 0));
+                }
+                return { path: bestPath, score: bestScore };
+            }
+            // [Manual Action Required] Replace the entire run() method with this:
+            // [Optimized] 减少默认迭代次数，使用基于时间的 Yield
+            async run(iterations = 200000000, updateCallback, stopRef, initialPathIds = null) {
+                this.onLog(`TSP: 启动高强度计算 (Iter: ${(iterations / 1000000).toFixed(0)}M)...`);
+
+                let init;
+                if (initialPathIds && initialPathIds.length === this.ids.length) {
+                    // Convert ID string array back to index array
+                    const idxMap = new Map();
+                    this.ids.forEach((id, idx) => idxMap.set(id, idx));
+
+                    const idxPath = initialPathIds.map(id => idxMap.get(id));
+                    if (idxPath.some(x => x === undefined)) {
+                        this.onLog("⚠️ 现有列顺序数据异常，回退至贪心初始化...");
+                        init = await this.greedyInit(); // Fallback
+                    } else {
+                        const score = this.getPathScore(idxPath);
+                        this.onLog(`🔄 继承现有列顺序作为起点 (Score: ${score})`);
+                        init = { path: idxPath, score: score };
+                    }
+                } else {
+                    init = await this.greedyInit(); // Start with a good greedy solution
+                }
+
+                // --- Core State ---
+                let currentPath = [...init.path];
+                let currentScore = init.score;
+                let bestPath = [...currentPath];
+                let bestScore = currentScore;
+
+                // --- Elite Pool (Diversity Preservation) ---
+                // Maintain Top 5 distinct solutions to jump between
+                const elitePool = [];
+                const addToElite = (path, score) => {
+                    // Check similarity (Hamming distance or simple exact match)
+                    const isSimilar = elitePool.some(e => Math.abs(e.score - score) < 1 && e.path.join() === path.join());
+                    if (!isSimilar) {
+                        elitePool.push({ path: [...path], score });
+                        elitePool.sort((a, b) => b.score - a.score);
+                        if (elitePool.length > 5) elitePool.pop();
+                    }
+                };
+                addToElite(bestPath, bestScore);
+
+                // --- Tabu Search (Short-term Memory) ---
+                // Pre-allocate a small circular buffer for tabu hashes
+                const tabuSize = 20;
+                const tabuList = new Int32Array(tabuSize);
+                let tabuPtr = 0;
+                const addTabu = (path) => {
+                    // Simple hash of first, middle, last elements
+                    const h = path[0] ^ path[path.length >> 1] ^ path[path.length - 1];
+                    tabuList[tabuPtr] = h;
+                    tabuPtr = (tabuPtr + 1) % tabuSize;
+                };
+                const isTabu = (path) => {
+                    const h = path[0] ^ path[path.length >> 1] ^ path[path.length - 1];
+                    for (let i = 0; i < tabuSize; i++) if (tabuList[i] === h) return true;
+                    return false;
+                };
+
+                // SA Params
+                let temp = 500.0;
+                const cooling = 0.999;
+                let lastImprovement = 0;
+                const n = this.ids.length;
+
+                // Performance Control
+                let lastYieldTime = performance.now();
+                let lastUIUpdateTime = performance.now();
+
+                for (let i = 0; i < iterations; i++) {
+                    if (stopRef.current) break;
+
+                    const moveType = Math.random();
+                    let newPath = [...currentPath];
+                    let delta = 0;
+                    let isFullCalc = false;
+
+                    // --- Mutation Strategies ---
+                    if (moveType < 0.6) {
+                        // === 2-Opt (60%) ===
+                        const idx1 = Math.floor(Math.random() * n);
+                        const idx2 = Math.floor(Math.random() * n);
+                        const s = Math.min(idx1, idx2), e = Math.max(idx1, idx2);
+                        if (s === e) continue;
+
+                        // Delta Calculation
+                        const nA = s > 0 ? currentPath[s - 1] : -1, nB = currentPath[s];
+                        const nC = currentPath[e], nD = e < n - 1 ? currentPath[e + 1] : -1;
+                        let oldSim = 0; if (nA !== -1) oldSim += this.matrix[nA][nB]; if (nD !== -1) oldSim += this.matrix[nC][nD];
+                        let newSim = 0; if (nA !== -1) newSim += this.matrix[nA][nC]; if (nD !== -1) newSim += this.matrix[nB][nD];
+                        delta = newSim - oldSim;
+
+                        if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                            // Apply Reversal
+                            let l = s, r = e;
+                            while (l < r) { [newPath[l], newPath[r]] = [newPath[r], newPath[l]]; l++; r--; }
+                            // 2-Opt doesn't need isFullCalc if delta is correct, but let's trust delta
+                        } else {
+                            continue; // Rejected
+                        }
+                    }
+                    else if (moveType < 0.8) {
+                        // === Insertion (20%) ===
+                        // Good for moving a single misaligned region
+                        const from = Math.floor(Math.random() * n);
+                        let to = Math.floor(Math.random() * n);
+                        while (to === from) to = Math.floor(Math.random() * n);
+
+                        const [node] = newPath.splice(from, 1);
+                        newPath.splice(to, 0, node);
+                        isFullCalc = true;
+                    }
+                    else {
+                        // === Double Bridge (20%) ===
+                        // Strong non-reversible kick (A B C D -> A D C B)
+                        // Improves topological structure
+                        const pos1 = 1 + Math.floor(Math.random() * (n / 4));
+                        const pos2 = pos1 + 1 + Math.floor(Math.random() * (n / 4));
+                        const pos3 = pos2 + 1 + Math.floor(Math.random() * (n / 4));
+
+                        if (pos3 < n - 1) {
+                            const chunkA = newPath.slice(0, pos1);
+                            const chunkB = newPath.slice(pos1, pos2);
+                            const chunkC = newPath.slice(pos2, pos3);
+                            const chunkD = newPath.slice(pos3);
+                            newPath = [...chunkA, ...chunkD, ...chunkC, ...chunkB];
+                            isFullCalc = true;
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    // --- Acceptance Logic ---
+                    if (isFullCalc) {
+                        const newScore = this.getPathScore(newPath);
+                        delta = newScore - currentScore;
+                        if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                            // Accept
+                        } else {
+                            continue; // Reject
+                        }
+                    } else {
+                        // If we are here, 2-Opt was already accepted based on delta
+                    }
+
+                    // --- Update Current State ---
+                    // Tabu Check: Don't go back immediately unless it's a breakthrough
+                    if (!isTabu(newPath) || (currentScore + delta > bestScore)) {
+                        if (isFullCalc) {
+                            currentPath = newPath;
+                            currentScore = this.getPathScore(newPath);
+                        } else {
+                            // For 2-opt, newPath was modified in place above (if we used a copy appropriately)
+                            // But wait, my 2-opt above modified 'newPath' but currentPath was separate.
+                            // FIX: Need to update currentPath from newPath
+                            currentPath = newPath;
+                            currentScore += delta;
+                        }
+
+                        addTabu(currentPath);
+
+                        // --- Update Global Best ---
+                        if (currentScore > bestScore) {
+                            bestScore = currentScore;
+                            bestPath = [...currentPath];
+                            lastImprovement = i;
+                            addToElite(bestPath, bestScore);
+
+                            // Throttle UI Updates (High Priority)
+                            if (updateCallback && (i - lastImprovement < 100)) updateCallback(null, bestScore);
+                        }
+                    }
+
+                    // --- Annealing Schedule ---
+                    if (i % 500 === 0) temp *= cooling;
+
+                    // --- Advanced ILS Strategy (Kick & Diversity) ---
+                    // If stuck for too long (e.g. 500k iters), Force Jump
+                    if (temp < 0.1 || (i - lastImprovement > 300000)) {
+                        // Strategy 1: Jump to a random Elite (Diversity)
+                        if (elitePool.length > 0 && Math.random() < 0.5) {
+                            const elite = elitePool[Math.floor(Math.random() * elitePool.length)];
+                            currentPath = [...elite.path];
+                            currentScore = elite.score;
+                            // this.onLog(`[ILS] Jumping to Elite Score: ${currentScore}`);
+                        } else {
+                            // Strategy 2: Back to Best (Intensification)
+                            currentPath = [...bestPath];
+                            currentScore = bestScore;
+                        }
+
+                        // Apply Smart Kick: Double Bridge (Strong Perturbation)
+                        // A standard 4-opt move that cannot be undone by simple 2-opt
+                        const pos1 = Math.floor(n / 4);
+                        const pos2 = Math.floor(n / 2);
+                        const pos3 = Math.floor(3 * n / 4);
+                        const chunkA = currentPath.slice(0, pos1);
+                        const chunkB = currentPath.slice(pos1, pos2);
+                        const chunkC = currentPath.slice(pos2, pos3);
+                        const chunkD = currentPath.slice(pos3);
+                        // Shuffle chunks order
+                        currentPath = [...chunkA, ...chunkD, ...chunkB, ...chunkC];
+
+                        // Recalc Score & Reset Temp
+                        currentScore = this.getPathScore(currentPath);
+                        temp = 200.0 + Math.random() * 100; // Randomize reheat
+                        lastImprovement = i;
+                    }
+
+                    // --- UI Yielding ---
+                    if (i % 4000 === 0) {
+                        const now = performance.now();
+                        if (now - lastYieldTime > 12) {
+                            if (now - lastUIUpdateTime > 1000) {
+                                this.onLog(`TSP Iter ${(i / 1000000).toFixed(2)}M: Temp ${temp.toFixed(1)} | Best ${bestScore} | Elite: ${elitePool.length}`);
+                                if (updateCallback) updateCallback(null, bestScore);
+                                lastUIUpdateTime = now;
+                                await new Promise(r => setTimeout(r, 0));
+                            } else {
+                                await new Promise(r => setTimeout(r, 0));
+                            }
+                            lastYieldTime = performance.now();
+                        }
+                    }
+                } // End Loop
+
+                // --- Final Geo-Correction ---
+                if (this.names) {
+                    const eastKeywords = ['hokkaido', '北海道', 'japan', '日本', 'nihon'];
+                    let eastIndexSum = 0, eastCount = 0;
+                    bestPath.forEach((idx, pos) => {
+                        const id = this.ids[idx];
+                        const name = (this.names[id] || id).toLowerCase();
+                        if (eastKeywords.some(k => name.includes(k))) { eastIndexSum += pos; eastCount++; }
+                    });
+                    if (eastCount > 0) {
+                        const avgPos = eastIndexSum / eastCount;
+                        if (avgPos < n / 2) {
+                            this.onLog(`地理修正: 东方板块居左 (${avgPos.toFixed(1)} < ${n / 2}) -> 翻转`);
+                            bestPath.reverse();
+                        }
+                    }
+                }
+
+                return { path: bestPath.map(idx => this.ids[idx]), score: bestScore };
+            }
+        }
+
+        // --- 算法 2: 全局主序优化器 (含 Stop 功能) ---
+        class GlobalSequenceOptimizer {
+            constructor(colOrder, grid, onLog) {
+                this.cols = colOrder;
+                this.grid = grid;
+                this.onLog = onLog;
+                this.masterSeqs = {};
+                this.activeSets = {};
+                // [Optimization] 缓存结构
+                this.pairScores = {}; // 缓存相邻列的得分 { "0": score, "1": score... }
+                this.cutoffYears = []; // 智能采样：政权交替的关键年份
+                this.activeSetsByYear = {}; // 快速查询：{ colId: { year: Set(regimes) } }
+            }
+
+            init(existingMasterSeqs = null) {
+                // 1. 基础数据结构初始化
+                let loadedCount = 0;
+                this.cols.forEach(id => {
+                    this.activeSets[id] = {};
+                    const regimeFirstSeen = {};
+                    const regimes = new Set();
+                    let filledForCol = 0; // Local counter
+
+                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                        const set = this.grid[id]?.[y];
+                        if (set) {
+                            this.activeSets[id][y] = set;
+                            set.forEach(r => {
+                                regimes.add(r);
+                                if (!regimeFirstSeen[r]) regimeFirstSeen[r] = y;
+                            });
+                        }
+                    }
+
+                    // 恢复或初始化主序
+                    if (existingMasterSeqs && existingMasterSeqs[id]) {
+                        loadedCount++; // [New] Count success
+                        const oldSeq = existingMasterSeqs[id];
+                        const newSeq = oldSeq.map(r => {
+                            if (regimes.has(r)) return r;
+
+                            // [Migration] 1. Try legacy Dash to Pipe replacement
+                            let candidate = r.replace('-', '|');
+                            if (regimes.has(candidate)) return candidate;
+
+                            // [Migration] 2. Fuzzy Match: Name only -> Name|Code
+                            for (const currentId of regimes) {
+                                if (currentId.split('|')[0] === r) return currentId;
+                                if (r.includes('|') && r.split('|')[0] === currentId) return currentId;
+                            }
+                            return null;
+                        }).filter(r => r !== null);
+
+                        const newSet = new Set(newSeq);
+                        const newItems = Array.from(regimes).filter(r => !newSet.has(r));
+                        this.masterSeqs[id] = [...newSeq, ...newItems];
+                    } else {
+                        // 随机初始化
+                        this.masterSeqs[id] = Array.from(regimes).sort(() => Math.random() - 0.5);
+                    }
+                });
+
+                if (existingMasterSeqs) {
+                    this.onLog(`[Init] 成功继承 ${loadedCount}/${this.cols.length} 列。`);
+                    if (loadedCount < this.cols.length) {
+                        this.onLog(`[Init] 其余 ${this.cols.length - loadedCount} 列已随机初始化。`);
+                    }
+                }
+
+                // [Optimization] 2. 生成智能“切口年份” (Smart Sampling / Cut-off Years)
+                const changeYears = new Set();
+                changeYears.add(CONFIG.MIN_YEAR);
+
+                let totalSlots = 0;
+                let filledSlots = 0;
+
+                this.cols.forEach(id => {
+                    let lastSig = "";
+                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                        const set = this.activeSets[id]?.[y];
+                        const sig = set ? Array.from(set).sort().join(',') : "";
+                        if (sig !== lastSig) {
+                            changeYears.add(y);
+                            lastSig = sig;
+                        }
+
+                        // [New] Density Stats
+                        totalSlots++;
+                        if (set && set.size > 0) filledSlots += set.size;
+                    }
+                });
+
+                this.cutoffYears = Array.from(changeYears).sort((a, b) => a - b);
+
+                // [New] Adaptive Weights
+                const density = totalSlots > 0 ? filledSlots / totalSlots : 0.1;
+                // [Normalized] 归一化权重
+                this.weights = {
+                    stability: 5,
+                    continuity: 0.01,
+                    adjacency: 0.2,
+                    gap: 0.02
+                };
+
+                // Heuristic Density Tuning
+                if (density < 0.2) {
+                    this.weights.gap = 0.04;
+                    this.weights.adjacency = 0.3;
+                    this.weights.stability = 3;
+                } else if (density > 0.8) {
+                    this.weights.gap = 0.01;
+                    this.weights.stability = 8;
+                }
+
+                if (this.onLog) {
+                    this.onLog(`SeqOpt: 智能采样分析完成 (${this.cutoffYears.length} Keyframes). Density: ${density.toFixed(2)}`);
+                    this.onLog(`SeqOpt Weights -> Gap: ${this.weights.gap}, Adj: ${this.weights.adjacency}, Stab: ${this.weights.stability}`);
+                }
+            }
+
+
+
+            // [Enhanced] 增强版贪心构造：重心法 (Barycenter Heuristic)
+            // 利用物理重心原理，让政权自动被左右邻居"拉"到对齐位置
+            greedyConstruct() {
+                this.onLog(`[Greedy] 开始增强版贪心构造 (重心法)...`);
+                const result = {};
+
+                // === Phase 1: 基础构建 (首次出现年份索引) ===
+                const regimeFirstYear = {};
+                this.cols.forEach(colId => {
+                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                        const set = this.activeSets[colId]?.[y];
+                        if (set) set.forEach(r => regimeFirstYear[r] = (regimeFirstYear[r] === undefined ? y : Math.min(regimeFirstYear[r], y)));
+                    }
+                });
+
+                // === Phase 2: 初始填充 (简单时间排序) ===
+                // 先给一个粗糙的初始解，确保所有政权都在序列中
+                this.cols.forEach(colId => {
+                    const regimesInCol = new Set();
+                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                        const set = this.activeSets[colId]?.[y];
+                        if (set) set.forEach(r => regimesInCol.add(r));
+                    }
+                    // 初始按年份排序
+                    result[colId] = Array.from(regimesInCol).sort((a, b) => {
+                        return (regimeFirstYear[a] || 0) - (regimeFirstYear[b] || 0);
+                    });
+                });
+
+                // === Phase 3: 重心扫描 (Barycenter Sweep) ===
+                // 模拟物理引力，反复来回扫描，让政权对齐
+                const rounds = 10;
+
+                for (let r = 0; r < rounds; r++) {
+                    // console.log(`Gravity Round ${r}`);
+
+                    // 正向扫描 (L -> R) & 反向扫描 (R -> L)
+                    // 实际上重心法一般只需要在计算时同时看左右即可，这里简化为逐列更新
+                    const colIndices = r % 2 === 0
+                        ? Array.from({ length: this.cols.length }, (_, i) => i) // 0, 1, 2...
+                        : Array.from({ length: this.cols.length }, (_, i) => i).reverse(); // n, n-1...
+
+                    let moved = false;
+
+                    for (const c of colIndices) {
+                        const colId = this.cols[c];
+                        const seq = result[colId];
+                        const len = seq.length;
+                        if (len < 2) continue;
+
+                        // 计算该列每个政权的"重心分数"
+                        const scores = seq.map(regime => {
+                            let totalPos = 0;
+                            let limit = 0;
+
+                            // 1. 左引力
+                            if (c > 0) {
+                                const leftId = this.cols[c - 1];
+                                const leftSeq = result[leftId];
+                                const leftIdx = leftSeq.indexOf(regime); // 实际上需要模糊匹配，为性能暂用精确
+                                if (leftIdx !== -1) {
+                                    // 归一化位置 (0~1)
+                                    totalPos += (leftIdx / leftSeq.length) * 5.0; // 权重5
+                                    limit += 5.0;
+                                }
+                            }
+
+                            // 2. 右引力
+                            if (c < this.cols.length - 1) {
+                                const rightId = this.cols[c + 1];
+                                const rightSeq = result[rightId];
+                                const rightIdx = rightSeq.indexOf(regime);
+                                if (rightIdx !== -1) {
+                                    totalPos += (rightIdx / rightSeq.length) * 5.0;
+                                    limit += 5.0;
+                                }
+                            }
+
+                            // 3. 时间引力 (保持历史大致有序)
+                            // 归一化年份 (-2070 ~ 2025) -> (0 ~ 1)
+                            const year = regimeFirstYear[regime] || CONFIG.MIN_YEAR;
+                            const yearNorm = (year - CONFIG.MIN_YEAR) / (CONFIG.MAX_YEAR - CONFIG.MIN_YEAR);
+                            totalPos += yearNorm * 1.0; // 权重1 (弱约束，仅用于打破平局)
+                            limit += 1.0;
+
+                            return { regime, s: totalPos / limit };
+                        });
+
+                        // 根据重心分数排序
+                        scores.sort((a, b) => a.s - b.s);
+
+                        // 更新序列
+                        const newSeq = scores.map(x => x.regime);
+
+                        // 简单检测是否变化
+                        if (JSON.stringify(newSeq) !== JSON.stringify(seq)) {
+                            result[colId] = newSeq;
+                            moved = true;
+                        }
+                    }
+
+                    if (!moved) break; // 提前收敛
+                }
+
+                this.onLog(`[Greedy] 重心法构造完成 (${rounds} Rounds)。`);
+                return result;
+            }
+
+            // [NEW] 潜力导向的针对性修复
+            // 识别可以对齐但未对齐的共享政权，系统性地尝试修复
+            targetedRepair(seqs, maxRounds = 50) {
+                this.onLog(`[TargetedRepair] 开始潜力扫描...`);
+                let currentSeqs = JSON.parse(JSON.stringify(seqs));
+                let currentScore = this.calculateGlobalScore(currentSeqs);
+                let improvements = 0;
+
+                for (let round = 0; round < maxRounds; round++) {
+                    // === Step 1: 计算所有"未兑现潜力" ===
+                    const potentials = [];
+
+                    for (let c = 0; c < this.cols.length - 1; c++) {
+                        const idA = this.cols[c];
+                        const idB = this.cols[c + 1];
+                        const seqA = currentSeqs[idA];
+                        const seqB = currentSeqs[idB];
+
+                        if (!seqA || !seqB) continue;
+
+                        // 构建位置映射
+                        const mapA = new Map();
+                        seqA.forEach((r, idx) => mapA.set(r, idx));
+                        const mapB = new Map();
+                        seqB.forEach((r, idx) => mapB.set(r, idx));
+
+                        // 遍历所有关键年份
+                        for (const y of this.cutoffYears) {
+                            const setA = this.activeSets[idA]?.[y];
+                            const setB = this.activeSets[idB]?.[y];
+                            if (!setA || !setB) continue;
+
+                            // 找共享政权
+                            setA.forEach(r => {
+                                if (setB.has(r) && mapA.has(r) && mapB.has(r)) {
+                                    const idxA = mapA.get(r);
+                                    const idxB = mapB.get(r);
+
+                                    // 计算当前Y年的活跃政权列表
+                                    const activeA = seqA.filter(x => setA.has(x));
+                                    const activeB = seqB.filter(x => setB.has(x));
+
+                                    const posA = activeA.indexOf(r);
+                                    const posB = activeB.indexOf(r);
+
+                                    if (posA === -1 || posB === -1) return;
+
+                                    const distA = activeA.length - 1 - posA; // 离右边缘的距离
+                                    const distB = posB; // 离左边缘的距离
+                                    const gap = distA + distB;
+
+                                    if (gap > 0) {
+                                        // 计算潜力 = gap * duration
+                                        const nextY = this.cutoffYears[this.cutoffYears.indexOf(y) + 1] || CONFIG.MAX_YEAR;
+                                        const duration = nextY - y;
+
+                                        potentials.push({
+                                            regime: r,
+                                            colIdxA: c,
+                                            colIdxB: c + 1,
+                                            idA, idB,
+                                            idxA, idxB,
+                                            gap,
+                                            potential: gap * duration,
+                                            year: y,
+                                            // 阻挡者：在A列中阻止r到达右边缘的政权
+                                            blockersA: activeA.slice(posA + 1),
+                                            // 阻挡者：在B列中阻止r到达左边缘的政权
+                                            blockersB: activeB.slice(0, posB)
+                                        });
+                                    }
+                                }
+                            });
+                        }
+                    }
+
+                    if (potentials.length === 0) {
+                        this.onLog(`[TargetedRepair] 第 ${round + 1} 轮: 无未兑现潜力。`);
+                        break;
+                    }
+
+                    // === Step 2: 按潜力从大到小排序 ===
+                    potentials.sort((a, b) => b.potential - a.potential);
+
+                    // === Step 3: 尝试兑现最大潜力 ===
+                    let improved = false;
+
+                    for (let i = 0; i < Math.min(10, potentials.length); i++) {
+                        const p = potentials[i];
+
+                        // 尝试策略1: 在A列中，把阻挡者移到r前面
+                        if (p.blockersA.length > 0) {
+                            const seqA = currentSeqs[p.idA];
+                            const rIdx = seqA.indexOf(p.regime);
+
+                            // 找到第一个阻挡者
+                            for (const blocker of p.blockersA) {
+                                const blockerIdx = seqA.indexOf(blocker);
+                                if (blockerIdx > rIdx) {
+                                    // 尝试把 blocker 移到 r 前面
+                                    const newSeqA = [...seqA];
+                                    newSeqA.splice(blockerIdx, 1); // 移除 blocker
+                                    const newRIdx = newSeqA.indexOf(p.regime);
+                                    newSeqA.splice(newRIdx, 0, blocker); // 插入到 r 前面
+
+                                    // 评估分数变化
+                                    const oldScore = this.calculateColumnStability(p.idA, seqA) +
+                                        (p.colIdxA > 0 ? this.calculatePairScore(this.cols[p.colIdxA - 1], p.idA, currentSeqs[this.cols[p.colIdxA - 1]], seqA) : 0) +
+                                        this.calculatePairScore(p.idA, p.idB, seqA, currentSeqs[p.idB]);
+
+                                    const newScore = this.calculateColumnStability(p.idA, newSeqA) +
+                                        (p.colIdxA > 0 ? this.calculatePairScore(this.cols[p.colIdxA - 1], p.idA, currentSeqs[this.cols[p.colIdxA - 1]], newSeqA) : 0) +
+                                        this.calculatePairScore(p.idA, p.idB, newSeqA, currentSeqs[p.idB]);
+
+                                    if (newScore > oldScore) {
+                                        currentSeqs[p.idA] = newSeqA;
+                                        improvements++;
+                                        improved = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 尝试策略2: 在B列中，把阻挡者移到r后面
+                        if (!improved && p.blockersB.length > 0) {
+                            const seqB = currentSeqs[p.idB];
+                            const rIdx = seqB.indexOf(p.regime);
+
+                            for (const blocker of p.blockersB) {
+                                const blockerIdx = seqB.indexOf(blocker);
+                                if (blockerIdx < rIdx) {
+                                    // 尝试把 blocker 移到 r 后面
+                                    const newSeqB = [...seqB];
+                                    newSeqB.splice(blockerIdx, 1);
+                                    const newRIdx = newSeqB.indexOf(p.regime);
+                                    newSeqB.splice(newRIdx + 1, 0, blocker);
+
+                                    const oldScore = this.calculateColumnStability(p.idB, seqB) +
+                                        this.calculatePairScore(p.idA, p.idB, currentSeqs[p.idA], seqB) +
+                                        (p.colIdxB < this.cols.length - 1 ? this.calculatePairScore(p.idB, this.cols[p.colIdxB + 1], seqB, currentSeqs[this.cols[p.colIdxB + 1]]) : 0);
+
+                                    const newScore = this.calculateColumnStability(p.idB, newSeqB) +
+                                        this.calculatePairScore(p.idA, p.idB, currentSeqs[p.idA], newSeqB) +
+                                        (p.colIdxB < this.cols.length - 1 ? this.calculatePairScore(p.idB, this.cols[p.colIdxB + 1], newSeqB, currentSeqs[this.cols[p.colIdxB + 1]]) : 0);
+
+                                    if (newScore > oldScore) {
+                                        currentSeqs[p.idB] = newSeqB;
+                                        improvements++;
+                                        improved = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (improved) break;
+                    }
+
+                    if (!improved) {
+                        this.onLog(`[TargetedRepair] 第 ${round + 1} 轮: 无法兑现剩余潜力。`);
+                        break;
+                    }
+                }
+
+                const finalScore = this.calculateGlobalScore(currentSeqs);
+                this.onLog(`[TargetedRepair] 完成。共 ${improvements} 次改进。分数: ${Math.floor(finalScore)}`);
+                return { seqs: currentSeqs, score: finalScore };
+            }
+
+            // [NEW] 局部优化：只接受更优解的 Hill Climbing
+            localRefine(seqs, maxSeconds = 5) {
+                this.onLog(`[Refine] 开始局部优化 (${maxSeconds}秒)...`);
+                const startTime = performance.now();
+                let currentSeqs = JSON.parse(JSON.stringify(seqs));
+                let currentScore = this.calculateGlobalScore(currentSeqs);
+                let bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                let bestScore = currentScore;
+                let improvements = 0;
+
+                // 迭代优化每一列
+                let round = 0;
+                while (performance.now() - startTime < maxSeconds * 1000) {
+                    round++;
+                    let anyImproved = false;
+
+                    for (let c = 0; c < this.cols.length; c++) {
+                        if (performance.now() - startTime > maxSeconds * 1000) break;
+
+                        const colId = this.cols[c];
+                        const seq = currentSeqs[colId];
+                        if (!seq || seq.length < 2) continue;
+
+                        // 尝试所有相邻交换
+                        for (let i = 0; i < seq.length - 1; i++) {
+                            // Swap i and i+1
+                            [seq[i], seq[i + 1]] = [seq[i + 1], seq[i]];
+
+                            // 快速评估局部变化
+                            let newLocalScore = this.calculateColumnStability(colId, seq);
+                            if (c > 0) {
+                                newLocalScore += this.calculatePairScore(
+                                    this.cols[c - 1], colId,
+                                    currentSeqs[this.cols[c - 1]], seq
+                                );
+                            }
+                            if (c < this.cols.length - 1) {
+                                newLocalScore += this.calculatePairScore(
+                                    colId, this.cols[c + 1],
+                                    seq, currentSeqs[this.cols[c + 1]]
+                                );
+                            }
+
+                            // 计算旧的局部分数
+                            const oldSeq = [...seq];
+                            [oldSeq[i], oldSeq[i + 1]] = [oldSeq[i + 1], oldSeq[i]]; // Revert
+                            let oldLocalScore = this.calculateColumnStability(colId, oldSeq);
+                            if (c > 0) {
+                                oldLocalScore += this.calculatePairScore(
+                                    this.cols[c - 1], colId,
+                                    currentSeqs[this.cols[c - 1]], oldSeq
+                                );
+                            }
+                            if (c < this.cols.length - 1) {
+                                oldLocalScore += this.calculatePairScore(
+                                    colId, this.cols[c + 1],
+                                    oldSeq, currentSeqs[this.cols[c + 1]]
+                                );
+                            }
+
+                            if (newLocalScore > oldLocalScore) {
+                                // 保持交换（已经交换了）
+                                improvements++;
+                                anyImproved = true;
+                                // 更新缓存
+                                this.stabilityScores[colId] = this.calculateColumnStability(colId, seq);
+                                if (c > 0) this.pairScores[c - 1] = this.calculatePairScore(this.cols[c - 1], colId, currentSeqs[this.cols[c - 1]], seq);
+                                if (c < this.cols.length - 1) this.pairScores[c] = this.calculatePairScore(colId, this.cols[c + 1], seq, currentSeqs[this.cols[c + 1]]);
+                            } else {
+                                // 恢复交换
+                                [seq[i], seq[i + 1]] = [seq[i + 1], seq[i]];
+                            }
+                        }
+                    }
+
+                    // 更新全局最优
+                    const fullScore = this.calculateGlobalScore(currentSeqs);
+                    if (fullScore > bestScore) {
+                        bestScore = fullScore;
+                        bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                    }
+
+                    // 如果没有改进，提前退出
+                    if (!anyImproved) {
+                        this.onLog(`[Refine] 第 ${round} 轮无改进，提前结束。`);
+                        break;
+                    }
+                }
+
+                const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+                this.onLog(`[Refine] 完成。共 ${round} 轮，${improvements} 次改进。耗时 ${elapsed}s。Score: ${Math.floor(bestScore)}`);
+                return { seqs: bestSeqs, score: bestScore };
+            }
+
+            // [Core Optimization] 计算两列之间的 LAY 分数 (Adaptive)
+            calculateColumnStability(id, seq) {
+                let penalty = 0;
+                const cutoffs = this.cutoffYears;
+                const count = cutoffs.length;
+                const sets = this.activeSets[id];
+                const weight = this.weights.stability;
+
+                let prevList = [];
+                let currList = [];
+
+                // Init prevList
+                const y0 = cutoffs[0];
+                const set0 = sets[y0];
+                if (set0) {
+                    const len = seq.length;
+                    for (let k = 0; k < len; k++) {
+                        if (set0.has(seq[k])) prevList.push(seq[k]);
+                    }
+                }
+
+                for (let i = 1; i < count; i++) {
+                    const y = cutoffs[i];
+                    const currSet = sets[y];
+                    if (!currSet) continue;
+
+                    // Build currList based on Seq Order
+                    const len = seq.length;
+                    for (let k = 0; k < len; k++) {
+                        if (currSet.has(seq[k])) currList.push(seq[k]);
+                    }
+
+                    // Compare
+                    const prevLen = prevList.length;
+                    const currLen = currList.length;
+
+                    if (prevLen === 0 && currLen === 0) continue;
+
+                    // Calculate Shift Penalty
+                    for (let c = 0; c < currLen; c++) {
+                        const item = currList[c];
+                        const pIndex = prevList.indexOf(item);
+                        if (pIndex !== -1) {
+                            const shift = Math.abs(c - pIndex);
+                            if (shift > 0) penalty += shift * weight;
+                        }
+                    }
+
+                    // Swap buffers
+                    const temp = prevList;
+                    prevList = currList;
+                    currList = temp;
+                    currList.length = 0;
+                }
+
+                return -penalty;
+            }
+
+            calculatePairScore(idA, idB, seqA, seqB) {
+                let score = 0;
+                const cutoffs = this.cutoffYears;
+                const count = cutoffs.length;
+
+                // Weights
+                const wCont = this.weights.continuity;
+                const wGap = this.weights.gap;
+                const wAdj = this.weights.adjacency;
+
+                // 预计算位置索引
+                const mapA = new Map();
+                const lenA = seqA.length;
+                for (let k = 0; k < lenA; k++) mapA.set(seqA[k], k);
+
+                const mapB = new Map();
+                const lenB = seqB.length;
+                for (let k = 0; k < lenB; k++) mapB.set(seqB[k], k);
+
+                // Helper to safely get index with fuzzy matching
+                const getIdx = (map, key) => {
+                    if (map.has(key)) return map.get(key);
+                    if (typeof key === 'string' && key.includes('|')) {
+                        const short = key.split('|')[0];
+                        for (const [k, v] of map.entries()) {
+                            if (k.startsWith(short + '|')) return v;
+                        }
+                    }
+                    return undefined;
+                };
+
+                for (let i = 0; i < count; i++) {
+                    const y = cutoffs[i];
+                    const nextY = (i < count - 1) ? cutoffs[i + 1] : CONFIG.MAX_YEAR;
+                    const duration = nextY - y;
+
+                    const setA = this.activeSets[idA][y];
+                    const setB = this.activeSets[idB][y];
+
+                    if (!setA || !setB) continue;
+
+                    const shared = [];
+                    setA.forEach(rA => {
+                        if (setB.has(rA)) {
+                            shared.push(rA);
+                        } else {
+                            // Fuzzy Match Loop
+                            const idxA = rA.indexOf('|');
+                            const shortA = idxA === -1 ? rA : rA.substring(0, idxA);
+                            for (const rB of setB) {
+                                const idxB = rB.indexOf('|');
+                                const shortB = idxB === -1 ? rB : rB.substring(0, idxB);
+                                if (shortB === shortA) {
+                                    shared.push(rA);
+                                    break;
+                                }
+                            }
+                        }
+                    });
+
+                    if (shared.length === 0) continue;
+
+                    // 1. 基础奖励 (Continuity)
+                    score += shared.length * duration * wCont;
+
+                    let totalGap = 0;
+                    let adjacencies = 0;
+
+                    shared.forEach(r => {
+                        const idxA = getIdx(mapA, r);
+                        const idxB = getIdx(mapB, r);
+
+                        if (idxA !== undefined && idxB !== undefined) {
+                            const distA = lenA - 1 - idxA;
+                            const distB = idxB;
+                            const gap = distA + distB;
+
+                            totalGap += gap;
+
+                            // Adjacency Bonus: 完美贴合
+                            if (gap === 0) adjacencies++;
+                        }
+                    });
+
+                    // Penalty for Gap
+                    score -= totalGap * duration * wGap;
+
+                    // Bonus for Perfect Adjacency
+                    score += adjacencies * duration * wAdj;
+                }
+                return score;
+            }
+
+
+
+
+
+
+
+
+
+
+
+
+            // 初始化或全量计算全局分数
+            calculateGlobalScore(currentSeqs) {
+                let totalScore = 0;
+                this.pairScores = {}; // 重置缓存
+                this.stabilityScores = {}; // 缓存列稳定性分数
+
+                // 1. Column Stability Scores (Unary)
+                // 确保每一列内部的演变是平滑的
+                for (let c = 0; c < this.cols.length; c++) {
+                    const id = this.cols[c];
+                    const s = this.calculateColumnStability(id, currentSeqs[id]);
+                    this.stabilityScores[id] = s;
+                    totalScore += s;
+                }
+
+                // 2. Pair Scores (Binary)
+                // 确保列与列之间的连接是紧密的
+                for (let c = 0; c < this.cols.length - 1; c++) {
+                    const idA = this.cols[c];
+                    const idB = this.cols[c + 1];
+                    const s = this.calculatePairScore(idA, idB, currentSeqs[idA], currentSeqs[idB]);
+
+                    this.pairScores[c] = s; // 缓存 index-pair 分数
+                    totalScore += s;
+                }
+                return totalScore;
+            }
+
+            // [Optimization] 增量计算分数变化
+            // 只计算某一列发生交换后，与其左右邻居的分数变化
+            calculateScoreDeltaWithSwap(currentSeqs, colIdx, idx1, idx2) {
+                const colId = this.cols[colIdx];
+                const seq = currentSeqs[colId];
+
+                // 1. 确定受影响的邻居对
+                // Pair(c) 代表 cols[c] 和 cols[c+1] 之间的分数
+                const leftPairIdx = colIdx - 1;
+                const rightPairIdx = colIdx;
+
+                // 2. 获取旧分数
+                let oldScorePart = 0;
+                if (leftPairIdx >= 0) oldScorePart += this.pairScores[leftPairIdx];
+                if (rightPairIdx < this.cols.length - 1) oldScorePart += this.pairScores[rightPairIdx];
+
+                // Add old stability score
+                const oldStability = this.stabilityScores[colId] || 0;
+                oldScorePart += oldStability;
+
+                // 3. 模拟交换
+                const temp = seq[idx1];
+                seq[idx1] = seq[idx2];
+                seq[idx2] = temp;
+
+                // 4. 计算新分数
+                let newLeftScore = 0;
+                let newRightScore = 0;
+
+                if (leftPairIdx >= 0) {
+                    const idLeft = this.cols[leftPairIdx];
+                    if (currentSeqs[idLeft]) {
+                        newLeftScore = this.calculatePairScore(idLeft, colId, currentSeqs[idLeft], seq);
+                    }
+                }
+                if (rightPairIdx < this.cols.length - 1) {
+                    const idRight = this.cols[rightPairIdx + 1];
+                    if (currentSeqs[idRight]) {
+                        newRightScore = this.calculatePairScore(colId, idRight, seq, currentSeqs[idRight]);
+                    }
+                }
+
+                // New Stability Score
+                const newStability = this.calculateColumnStability(colId, seq);
+
+                // 5. 恢复交换 (由调用者决定是否在大循环中正式应用)
+                seq[idx2] = seq[idx1];
+                seq[idx1] = temp;
+
+                // 返回 Delta 和新的局部缓存，以便接受时更新
+                return {
+                    delta: (newLeftScore + newRightScore + newStability) - oldScorePart,
+                    newLeftScore,
+                    newRightScore,
+                    newStability, // Return this
+                    leftPairIdx,
+                    rightPairIdx
+                };
+            }
+
+
+            async run(iterations = 500000, updateCallback, stopRef, existingMasterSeqs = null) {
+                this.init(existingMasterSeqs);
+                this.onLog("=== SeqOpt v2.2: 潜力导向优化 ===");
+
+                // === Strategy 1: 使用继承的布局（如果存在且有效） ===
+                let inheritedSeqs = null;
+                let inheritedScore = -Infinity;
+
+                // [Debug] 检查传入的 existingMasterSeqs
+                this.onLog(`[Debug] existingMasterSeqs: ${existingMasterSeqs ? Object.keys(existingMasterSeqs).length + '列' : 'NULL'}`);
+
+                if (existingMasterSeqs && Object.keys(existingMasterSeqs).length > 0) {
+                    inheritedSeqs = JSON.parse(JSON.stringify(this.masterSeqs));
+                    inheritedScore = this.calculateGlobalScore(inheritedSeqs);
+                    this.onLog(`[Inherited] 继承布局分数: ${Math.floor(inheritedScore)}`);
+                } else {
+                    this.onLog(`[Warning] 无继承布局，将从头构造。`);
+                }
+
+                // === Strategy 2: 贪心构造新布局 + 快速优化 ===
+                this.onLog(`[Greedy] 开始贪心构造...`);
+                let greedySeqs = this.greedyConstruct();
+                let greedyScore = this.calculateGlobalScore(greedySeqs);
+                this.onLog(`[Greedy] 初始构造分数: ${Math.floor(greedyScore)}`);
+
+                // 对贪心结果进行快速针对性修复（给贪心一个公平的机会）
+                const greedyRepair = this.targetedRepair(greedySeqs, 30);
+                if (greedyRepair.score > greedyScore) {
+                    greedySeqs = greedyRepair.seqs;
+                    greedyScore = greedyRepair.score;
+                    this.onLog(`[Greedy] 修复后分数: ${Math.floor(greedyScore)}`);
+                }
+
+                // === 选择更优的起点 (确保使用更高分的) ===
+                let currentSeqs;
+                let currentScore;
+
+                // 调试日志：明确显示比较结果
+                this.onLog(`[Compare] 继承: ${Math.floor(inheritedScore)}, 贪心: ${Math.floor(greedyScore)}`);
+
+                if (inheritedSeqs && inheritedScore >= greedyScore) {
+                    // 优先使用继承布局（分数相同或更高时）
+                    this.onLog(`[Decision] ✅ 以继承布局为起点`);
+                    currentSeqs = inheritedSeqs;
+                    currentScore = inheritedScore;
+                } else {
+                    this.onLog(`[Decision] 以贪心布局为起点`);
+                    currentSeqs = greedySeqs;
+                    currentScore = greedyScore;
+                }
+
+                // 显示初始布局
+                if (updateCallback) {
+                    updateCallback(this.generateLayout(currentSeqs), currentScore);
+                }
+                await new Promise(r => setTimeout(r, 100));
+
+                // === Phase 3: 潜力导向的针对性修复 ===
+                const repairResult = this.targetedRepair(currentSeqs, 50);
+                if (repairResult.score > currentScore) {
+                    currentSeqs = repairResult.seqs;
+                    currentScore = repairResult.score;
+                    this.onLog(`[Improved] 针对性修复后分数: ${Math.floor(currentScore)}`);
+                    if (updateCallback) {
+                        updateCallback(this.generateLayout(currentSeqs), currentScore);
+                    }
+                }
+                await new Promise(r => setTimeout(r, 100));
+
+                // === Phase 4: 深度优化 (SA + 策略修复) ===
+                this.onLog(`[Optimize] 开始深度优化，起点分数: ${Math.floor(currentScore)}`);
+
+                let bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                let bestScore = currentScore;
+                let lastImprovement = 0;
+                let temp = 2000.0;
+                let lastYield = performance.now();
+                let lastUIUpdate = performance.now();
+
+                // 辅助函数：针对某一列进行极致优化 (Defined here to be accessible throughout the loop)
+                const optimizeColumn = (cIdx) => {
+                    if (cIdx < 0 || cIdx >= this.cols.length) return;
+                    const colId = this.cols[cIdx];
+                    const originalSeq = currentSeqs[colId];
+                    if (!originalSeq || originalSeq.length < 2) return;
+
+                    const getContextScore = (s) => {
+                        let sc = 0;
+                        if (cIdx > 0) sc += this.calculatePairScore(this.cols[cIdx - 1], colId, currentSeqs[this.cols[cIdx - 1]], s);
+                        if (cIdx < this.cols.length - 1) sc += this.calculatePairScore(colId, this.cols[cIdx + 1], s, currentSeqs[this.cols[cIdx + 1]]);
+                        sc += this.calculateColumnStability(colId, s);
+                        return sc;
+                    };
+
+                    let bestLocalSeq = [...originalSeq];
+                    let bestLocalScore = getContextScore(originalSeq);
+
+                    if (originalSeq.length <= 6) {
+                        // [Nuclear] Full Permutation for small sets (<= 6)
+                        const permute = (arr, m = []) => {
+                            if (arr.length === 0) {
+                                const sc = getContextScore(m);
+                                if (sc > bestLocalScore) {
+                                    bestLocalScore = sc;
+                                    bestLocalSeq = m;
+                                }
+                            } else {
+                                for (let i = 0; i < arr.length; i++) {
+                                    const curr = arr.slice();
+                                    const next = curr.splice(i, 1);
+                                    permute(curr.slice(), m.concat(next));
+                                }
+                            }
+                        };
+                        permute(originalSeq);
+                    } else {
+                        // [Systematic Insertion Scan] for larger sets O(N^2)
+                        let improved = true;
+                        let scanLimit = 2; // Fast pass
+
+                        while (improved && scanLimit > 0) {
+                            improved = false;
+                            scanLimit--;
+
+                            for (let i = 0; i < bestLocalSeq.length; i++) {
+                                const item = bestLocalSeq[i];
+                                const tempSeq = bestLocalSeq.filter((_, idx) => idx !== i);
+
+                                let bestPos = -1;
+                                let currentMax = -Infinity;
+
+                                for (let pos = 0; pos <= tempSeq.length; pos++) {
+                                    const candidate = [...tempSeq.slice(0, pos), item, ...tempSeq.slice(pos)];
+                                    const s = getContextScore(candidate);
+                                    if (s > currentMax) {
+                                        currentMax = s;
+                                        bestPos = pos;
+                                    }
+                                }
+
+                                if (currentMax > bestLocalScore + 0.001) {
+                                    bestLocalScore = currentMax;
+                                    bestLocalSeq = [...tempSeq.slice(0, bestPos), item, ...tempSeq.slice(bestPos)];
+                                    improved = true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Apply result if better
+                    if (bestLocalScore > getContextScore(originalSeq)) {
+                        currentSeqs[colId] = bestLocalSeq;
+                        // Update caches in place
+                        this.stabilityScores[colId] = this.calculateColumnStability(colId, bestLocalSeq);
+                        if (cIdx > 0) this.pairScores[cIdx - 1] = this.calculatePairScore(this.cols[cIdx - 1], colId, currentSeqs[this.cols[cIdx - 1]], bestLocalSeq);
+                        if (cIdx < this.cols.length - 1) this.pairScores[cIdx] = this.calculatePairScore(colId, this.cols[cIdx + 1], bestLocalSeq, currentSeqs[this.cols[cIdx + 1]]);
+                        return true;
+                    }
+                    return false;
+                }; // End optimizeColumn
+
+                try {
+                    const deepIterations = Math.min(100000, iterations); // 限制深度优化迭代次数
+                    for (let i = 0; i < deepIterations; i++) {
+                        if (stopRef.current) break;
+
+                        const isDebugPhase = i < 100;
+
+                        // [Mutation Strategy Selector]
+                        // 30% Chance: Block Shift (To move entire timelines together and avoid breaking stability)
+                        // 70% Chance: Atomic Swap (Fine tuning)
+                        const mutationRoll = Math.random();
+
+                        if (mutationRoll < 0.3) {
+                            // --- Block Shift Mutation ---
+                            const randColIdx = Math.floor(Math.random() * this.cols.length);
+                            const colId = this.cols[randColIdx];
+                            const seq = currentSeqs[colId];
+
+                            if (seq && seq.length >= 3) {
+                                // 1. Define Random Block
+                                const maxBlockSize = Math.floor(seq.length * 0.7);
+                                const blockSize = Math.floor(Math.random() * (maxBlockSize - 1)) + 2; // Size 2 to 70%
+                                const startIdx = Math.floor(Math.random() * (seq.length - blockSize + 1));
+
+                                // 2. Extract & Reconstruct
+                                const movingBlock = seq.slice(startIdx, startIdx + blockSize);
+                                const remainder = [...seq.slice(0, startIdx), ...seq.slice(startIdx + blockSize)];
+                                const insertPos = Math.floor(Math.random() * (remainder.length + 1));
+                                const newSeq = [...remainder.slice(0, insertPos), ...movingBlock, ...remainder.slice(insertPos)];
+
+                                // 3. Local Score Evaluation (Fast)
+                                let oldCacheScore = (this.stabilityScores[colId] || 0);
+                                if (randColIdx > 0) oldCacheScore += (this.pairScores[randColIdx - 1] || 0);
+                                if (randColIdx < this.cols.length - 1) oldCacheScore += (this.pairScores[randColIdx] || 0);
+
+                                const getLocalScore = (s) => {
+                                    let sc = this.calculateColumnStability(colId, s);
+                                    if (randColIdx > 0) sc += this.calculatePairScore(this.cols[randColIdx - 1], colId, currentSeqs[this.cols[randColIdx - 1]], s);
+                                    if (randColIdx < this.cols.length - 1) sc += this.calculatePairScore(colId, this.cols[randColIdx + 1], s, currentSeqs[this.cols[randColIdx + 1]]);
+                                    return sc;
+                                };
+
+                                const newLocal = getLocalScore(newSeq);
+                                const delta = newLocal - oldCacheScore;
+
+                                // 4. Accept/Reject (SA)
+                                if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                                    currentSeqs[colId] = newSeq;
+                                    currentScore += delta;
+
+                                    // Update Caches
+                                    this.stabilityScores[colId] = this.calculateColumnStability(colId, newSeq);
+                                    if (randColIdx > 0) this.pairScores[randColIdx - 1] = this.calculatePairScore(this.cols[randColIdx - 1], colId, currentSeqs[this.cols[randColIdx - 1]], newSeq);
+                                    if (randColIdx < this.cols.length - 1) this.pairScores[randColIdx] = this.calculatePairScore(colId, this.cols[randColIdx + 1], newSeq, currentSeqs[this.cols[randColIdx + 1]]);
+
+                                    if (currentScore > bestScore) {
+                                        const verifiedScore = this.calculateGlobalScore(currentSeqs);
+                                        if (verifiedScore > bestScore) {
+                                            bestScore = verifiedScore;
+                                            bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                                            lastImprovement = i;
+                                        }
+                                        currentScore = verifiedScore;
+                                    }
+                                }
+                            }
+
+                        } else {
+                            // --- Atomic Swap Mutation (Legacy) ---
+                            // 1. Random Swap Perturbation (SA)
+                            const randColIdx = Math.floor(Math.random() * this.cols.length);
+                            const colId = this.cols[randColIdx];
+                            const seq = currentSeqs[colId];
+
+                            // [Safety Check]
+                            if (seq && seq.length >= 2) {
+                                const idx1 = Math.floor(Math.random() * seq.length);
+                                const idx2 = Math.floor(Math.random() * seq.length);
+
+                                if (idx1 !== idx2) {
+                                    const { delta, newLeftScore, newRightScore, newStability, leftPairIdx, rightPairIdx } =
+                                        this.calculateScoreDeltaWithSwap(currentSeqs, randColIdx, idx1, idx2);
+
+                                    if (delta > 0 || Math.random() < Math.exp(delta / temp)) {
+                                        // Apply Swap
+                                        [seq[idx1], seq[idx2]] = [seq[idx2], seq[idx1]];
+                                        currentScore += delta;
+
+                                        if (leftPairIdx >= 0) this.pairScores[leftPairIdx] = newLeftScore;
+                                        if (rightPairIdx < this.cols.length - 1) this.pairScores[rightPairIdx] = newRightScore;
+                                        this.stabilityScores[colId] = newStability;
+
+                                        if (currentScore > bestScore) {
+                                            const verifiedScore = this.calculateGlobalScore(currentSeqs);
+                                            if (verifiedScore > bestScore) {
+                                                bestScore = verifiedScore;
+                                                bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                                                lastImprovement = i;
+                                            }
+                                            currentScore = verifiedScore;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Cooling
+                        if (i % 500 === 0) temp *= 0.9995;
+
+                        // [Strategy 2] Strategic Repair (Every 1000 iters)
+                        // Target: 1. Physically broken columns (Unstable)
+                        //         2. Visually misaligned columns (High Gap Penalty)
+                        if (i % 1000 === 0) {
+                            let candidates = new Map(); // Use Map to dedupe: colIdx -> score
+
+                            for (let c = 0; c < this.cols.length; c++) {
+                                const cid = this.cols[c];
+                                let severity = 0;
+
+                                // Check Stability
+                                const stab = this.stabilityScores[cid] || 0;
+                                if (stab < -100) severity += stab;
+
+                                // Check Alignment (Left)
+                                if (c > 0) {
+                                    const pairL = this.pairScores[c - 1] || 0;
+                                    if (pairL < -500) severity += pairL; // Significant misalignment
+                                }
+                                // Check Alignment (Right)
+                                if (c < this.cols.length - 1) {
+                                    const pairR = this.pairScores[c] || 0;
+                                    if (pairR < -500) severity += pairR;
+                                }
+
+                                if (severity < -100) {
+                                    candidates.set(c, severity);
+                                }
+                            }
+
+                            if (candidates.size > 0) {
+                                // Convert to array and sort
+                                const sorted = Array.from(candidates.entries())
+                                    .map(([cIdx, score]) => ({ cIdx, score }))
+                                    .sort((a, b) => a.score - b.score);
+
+                                // Fix top 5 worst offenders
+                                const fixCount = Math.min(sorted.length, 5);
+                                for (let k = 0; k < fixCount; k++) {
+                                    const improved = optimizeColumn(sorted[k].cIdx);
+                                    if (improved) {
+                                        const realScore = this.calculateGlobalScore(currentSeqs);
+                                        if (realScore > bestScore) {
+                                            bestScore = realScore;
+                                            bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                                            lastImprovement = i;
+                                        }
+                                        currentScore = realScore;
+                                    }
+                                }
+                                if (isDebugPhase) this.onLog(`[Strategic Fix] Optimized ${fixCount} cols (Stab/Gap).`);
+                            } else {
+                                // Fallback: Random Polish
+                                const polishIdx = Math.floor(Math.random() * this.cols.length);
+                                const improved = optimizeColumn(polishIdx);
+                                if (improved) {
+                                    const realScore = this.calculateGlobalScore(currentSeqs);
+                                    currentScore = realScore;
+                                    if (currentScore > bestScore) {
+                                        bestScore = currentScore;
+                                        bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                                        lastImprovement = i;
+                                    }
+                                }
+                            }
+                        }
+
+                        // [Strategy 3] Ripple Repair (Stagnation Breaker)
+                        // Dynamic Threshold: As we go deeper (i increases), we become more aggressive (threshold decreases)
+                        // Early game: 20000 (Give SA time to work)
+                        // Late game (>200k): 2000 (Rely purely on Ripple to break deadlocks)
+                        let dynamicThreshold = 20000;
+                        if (i > 100000) dynamicThreshold = 5000;
+                        if (i > 300000) dynamicThreshold = 2000;
+
+                        if (i - lastImprovement > dynamicThreshold) {
+                            this.onLog(`[Ripple ILS] Stagnation > ${dynamicThreshold} at ${i}. Initiating Repair...`);
+
+                            // Reset to best to avoid divergence
+                            currentSeqs = JSON.parse(JSON.stringify(bestSeqs));
+                            this.calculateGlobalScore(currentSeqs);
+
+                            // Find worst columns
+                            const colScores = this.cols.map((cid, idx) => {
+                                let score = 0;
+                                if (idx > 0) score += this.pairScores[idx - 1];
+                                if (idx < this.cols.length - 1) score += this.pairScores[idx];
+                                score += this.stabilityScores[cid] || 0;
+                                return { idx, score };
+                            });
+                            colScores.sort((a, b) => a.score - b.score);
+
+                            // Target worst 3 + 2 random
+                            const targetIdxs = new Set(colScores.slice(0, 3).map(x => x.idx));
+                            while (targetIdxs.size < 5) targetIdxs.add(Math.floor(Math.random() * this.cols.length));
+
+                            // Optimize their neighborhood
+                            targetIdxs.forEach(centerIdx => {
+                                optimizeColumn(centerIdx);
+                                optimizeColumn(centerIdx - 1);
+                                optimizeColumn(centerIdx + 1);
+                            });
+
+                            currentScore = this.calculateGlobalScore(currentSeqs);
+                            if (currentScore > bestScore) {
+                                bestScore = currentScore;
+                                bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                                this.onLog(`[Ripple ILS] Breakthrough! Score: ${bestScore}`);
+                                if (updateCallback) updateCallback(this.generateLayout(bestSeqs), bestScore);
+                            }
+                            lastImprovement = i; // Reset timer
+                        }
+
+                        // UI Updates & Yielding
+                        if (i < 100 && i % 10 === 0) {
+                            // Debug phase
+                            await new Promise(r => setTimeout(r, 0));
+                        } else if (i % 2000 === 0) {
+                            const now = performance.now();
+                            if (now - lastYield > 12) {
+                                if (now - lastUIUpdate > 1000) {
+                                    this.onLog(`SeqOpt Iter ${(i / 1000000).toFixed(2)}M | Best: ${Math.floor(bestScore)} | Temp: ${temp.toFixed(0)}`);
+                                    if (updateCallback) updateCallback(this.generateLayout(bestSeqs), bestScore);
+                                    lastUIUpdate = now;
+                                    await new Promise(r => setTimeout(r, 0));
+                                } else {
+                                    await new Promise(r => setTimeout(r, 0));
+                                }
+                                lastYield = performance.now();
+                            }
+                        }
+                    }
+                } catch (e) {
+                    const errMsg = `[FATAL] SeqOpt Error: ${e.message}`;
+                    this.onLog(errMsg);
+                    console.error(e);
+                    // Fallback to best effort
+                }
+
+                // [Final Verification] 纠正增量误差
+                const finalVerifiedScore = this.calculateGlobalScore(bestSeqs);
+                this.onLog(`[Verify] Incr: ${bestScore} -> Full: ${finalVerifiedScore} (Diff: ${bestScore - finalVerifiedScore})`);
+                bestScore = finalVerifiedScore;
+
+                const finalMsg = `[DEBUG] Run Completed. Final Score: ${bestScore}`;
+                this.onLog(finalMsg);
+                console.log(finalMsg);
+
+                this.masterSeqs = bestSeqs;
+                return { layout: this.generateLayout(bestSeqs), score: bestScore };
+            }
+
+            generateLayout(seqs) {
+                const layout = {};
+                this.cols.forEach(id => {
+                    layout[id] = {};
+                    const master = seqs[id];
+                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                        const set = this.activeSets[id][y];
+                        if (set) layout[id][y] = master.filter(r => set.has(r));
+                        else layout[id][y] = [];
+                    }
+                });
+                return layout;
+            }
+        }
+
+        // --- App ---
+        function App() {
+            const [data, setData] = useState(null);
+            const [colOrder, setColOrder] = useState([]);
+            const [cellLayout, setCellLayout] = useState({});
+            const [masterSeqs, setMasterSeqs] = useState(null); // 存储主序列表
+
+            const [status, setStatus] = useState('idle');
+            const [tspBestScore, setTspBestScore] = useState(0); // 记录 TSP 历史最高分
+            const [logs, setLogs] = useState(['等待 CSV...']);
+            const [isFlipped, setIsFlipped] = useState(false); // [New] 翻转状态
+            const [layoutScore, setLayoutScore] = useState(0); // [New] 布局分数
+            const [draggedCol, setDraggedCol] = useState(null); // [New] 拖拽列索引
+            const [dataHash, setDataHash] = useState(null); // [New] 数据指纹
+
+            const fileInputRef = useRef();
+            const logEndRef = useRef();
+            const gridRef = useRef();
+            const stopRef = useRef(false);
+            const [scrollTop, setScrollTop] = useState(0);
+            const [viewportH, setViewportH] = useState(800);
+
+            // [New] Manual Sequence Adjustment Interaction States
+            const [interactionMode, setInteractionMode] = useState('idle'); // 'idle', 'select-region', 'select-regime-a', 'select-regime-b', 'confirm-move'
+            const [targetRegion, setTargetRegion] = useState(null);
+            const [moveRegimeA, setMoveRegimeA] = useState(null);
+            const [moveRegimeB, setMoveRegimeB] = useState(null);
+            const [scoreComparison, setScoreComparison] = useState(null); // { old: 0, new: 0 }
+
+
+
+            // [New] Quick Score Calculation
+            const calculateQuickScores = async (gridData, orderData, seqsData) => {
+                if (!gridData || !orderData) return;
+                try {
+                    const sorter = new AdvancedColumnSorter(orderData, gridData, {}, () => { });
+                    await sorter.precompute(); // Recalculate affinity matrix
+                    const path = orderData.map((_, i) => i);
+                    const tScore = sorter.getPathScore(path);
+                    setTspBestScore(Math.floor(tScore));
+                } catch (e) { console.warn("Quick TSP Calc failed", e); }
+
+                if (seqsData) {
+                    try {
+                        const optimizer = new GlobalSequenceOptimizer(orderData, gridData, () => { });
+                        optimizer.init(seqsData);
+                        const lScore = optimizer.calculateGlobalScore(seqsData);
+                        setLayoutScore(Math.floor(lScore));
+                        // Also set initial best score reference if needed
+                    } catch (e) { console.warn("Quick LAY Calc failed", e); }
+                } else {
+                    setLayoutScore(0);
+                }
+            };
+
+            const parseContent = async (content, isJSON, preloadedColOrder = null, preloadedMasterSeqs = null) => {
+                if (isJSON) {
+                    try {
+                        const json = JSON.parse(content);
+                        if (json.colOrder) { setColOrder(json.colOrder); addLog("已恢复列顺序模具。"); }
+                        if (json.masterSeqs) { setMasterSeqs(json.masterSeqs); addLog("已恢复主序列表模具。"); }
+
+                        // [New] Calculate Initial Scores immediately
+                        if (data && json.colOrder) {
+                            await calculateQuickScores(data.grid, json.colOrder, json.masterSeqs);
+                        }
+
+                        return json; // 返回供链式调用
+                    } catch (err) { alert("JSON Error"); }
+                } else {
+                    setDataHash(simpleHash(content)); // [New] 计算数据 Hash
+                    const lines = content.split(/\r?\n/).filter(l => l.trim());
+                    const headers = lines[0].toLowerCase().split(',');
+                    const findCol = (keys) => headers.findIndex(h => keys.some(k => h.includes(k)));
+                    const idx = {
+                        geoCode: findCol(['geo_code', 'region_code']),
+                        geoName: findCol(['geo_name', 'region_name']),
+                        start: findCol(['start']),
+                        end: findCol(['end']),
+                        regimeName: findCol(['regime_name', 'polity_name']),
+                        regimeCode: findCol(['regime_code', 'polity_code'])
+                    };
+                    if (idx.geoName === -1) idx.geoName = idx.geoCode;
+                    if (idx.regimeName === -1) idx.regimeName = idx.regimeCode;
+                    if (idx.geoCode === -1 || idx.start === -1) { alert("CSV Error: Missing columns"); return; }
+
+                    const regions = new Set();
+                    const grid = {};
+                    const regionNames = {};
+
+                    for (let i = 1; i < lines.length; i++) {
+                        const row = lines[i].split(',').map(s => s.trim().replace(/^"|"$/g, ''));
+                        if (row.length < 4) continue;
+                        const geoCode = row[idx.geoCode];
+                        const geoName = row[idx.geoName] || geoCode;
+                        const start = parseInt(row[idx.start]);
+                        let end = row[idx.end];
+                        end = (end === '' || end.toLowerCase().includes('present')) ? CONFIG.MAX_YEAR : parseInt(end);
+                        const regimeName = row[idx.regimeName];
+                        const regimeCode = row[idx.regimeCode] || regimeName; // 获取 Code
+
+                        if (!geoCode || isNaN(start)) continue;
+                        regions.add(geoCode);
+                        regionNames[geoCode] = geoName;
+                        // [New] 存储映射
+                        if (!regionNames._codes) regionNames._codes = {};
+                        regionNames._codes[regimeName] = regimeCode;
+
+                        if (!grid[geoCode]) grid[geoCode] = {};
+                        let loopEnd = (start === end) ? start : end - 1;
+                        for (let y = start; y <= loopEnd; y++) {
+                            if (y >= CONFIG.MIN_YEAR && y <= CONFIG.MAX_YEAR) {
+                                if (!grid[geoCode][y]) grid[geoCode][y] = new Set();
+                                // [Fix] ID 策略：Name + Code (确保跨时间段的政权同一性)
+                                grid[geoCode][y].add(regimeName + "|" + regimeCode);
+                            }
+                        }
+                    }
+
+                    const regionList = Array.from(regions).sort();
+                    // 这里名字复用 regionNames 对象存 code map，稍微有点所谓，但可以用 ._codes 访问
+                    setData({ regions: regionList, grid, names: regionNames, codes: regionNames._codes });
+
+                    // 关键修复：优先使用传入的预加载顺序，否则才用 State
+                    const currentOrder = preloadedColOrder || colOrder;
+                    // [New] 关键修复：优先使用传入的主序模具，否则才用 State
+                    const currentMasterSeqs = preloadedMasterSeqs || masterSeqs;
+
+                    const newRegionSet = new Set(regionList);
+                    const oldRegionSet = new Set(currentOrder);
+
+                    // 校验逻辑：只有当两个集合元素完全一致时，才保留布局
+                    const isSameRegions = currentOrder.length > 0 &&
+                        newRegionSet.size === oldRegionSet.size &&
+                        [...newRegionSet].every(x => oldRegionSet.has(x));
+
+                    if (isSameRegions) {
+                        try {
+                            addLog("检测到地区一致，保留现有列顺序模具。");
+                            // 既然一致，就强制应用这个顺序
+                            if (preloadedColOrder) setColOrder(preloadedColOrder);
+
+                            if (currentMasterSeqs) {
+                                addLog("尝试应用现有主序列表到新数据...");
+                                const sorter = new GlobalSequenceOptimizer(currentOrder, grid, () => { });
+                                sorter.masterSeqs = currentMasterSeqs;
+                                sorter.init(currentMasterSeqs);
+                                setMasterSeqs(sorter.masterSeqs);
+                                const newLayout = sorter.generateLayout(sorter.masterSeqs);
+                                setCellLayout(newLayout);
+
+                                const loadedScore = sorter.calculateGlobalScore(sorter.masterSeqs);
+                                setLayoutScore(loadedScore);
+                                addLog(`布局加载验证: 重新计算得分为 ${Math.floor(loadedScore)}`);
+                            } else {
+                                // Default Init
+                                const initLayout = {};
+                                currentOrder.forEach(id => {
+                                    initLayout[id] = {};
+                                    for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
+                                        const s = grid[id][y];
+                                        initLayout[id][y] = s ? Array.from(s).sort() : [];
+                                    }
+                                });
+                                setCellLayout(initLayout);
+                            }
+                        } catch (e) {
+                            addLog(`[Error] 应用布局失败: ${e.message}`);
+                            console.error(e);
+                            // Fallback to reset
+                            setColOrder(regionList);
+                            setMasterSeqs({});
+                            setCellLayout({});
+                        }
+                    } else {
+                        addLog(`地区模具不匹配 (原:${oldRegionSet.size}, 新:${newRegionSet.size})，重置布局。`);
+                        setColOrder(regionList);
+                        setMasterSeqs({});
+                        setCellLayout({});
+                    }
+                    const finalOrder = isSameRegions ? (preloadedColOrder || currentOrder) : regionList;
+                    const finalSeqs = isSameRegions ? currentMasterSeqs : null;
+
+                    // [New] Calc Scores
+                    calculateQuickScores(grid, finalOrder, finalSeqs);
+
+                    setStatus('ready');
+                }
+            };
+
+            const addLog = (msg) => setLogs(prev => [...prev.slice(-499), `> ${msg}`]);
+            useEffect(() => { if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [logs]);
+
+            const runDeepJointOptimization = async () => {
+                if (!data || status !== 'ready') return;
+                stopRef.current = false;
+                setStatus('optimizing');
+                addLog("=== 🚀 启动深度联合优化 (Deep Joint Optimization) ===");
+
+                // --- Phase 1: Column Sort ---
+                addLog(`[Phase 1] 列排序 (TSP)`);
+                // Note: bonusMatrix is null, so purely based on adjacency
+                const colSorter = new AdvancedColumnSorter(data.regions, data.grid, data.names, addLog);
+                await colSorter.precompute();
+
+
+
+                // Run TSP (Inherit current order if available)
+                const colResult = await colSorter.run(50000000, (_, score) => {
+                    if (score > tspBestScore) setTspBestScore(score);
+                }, stopRef, colOrder);
+
+                if (stopRef.current) { addLog("优化已中止"); setStatus('ready'); return; }
+
+                const newColOrder = colResult.path;
+                setColOrder(newColOrder); // Update State
+                setTspBestScore(colResult.score);
+                addLog(`列排序完成。Score: ${colResult.score}`);
+
+                // --- Phase 2: Cell Layout ---
+                setStatus('layout');
+                addLog(`[Phase 2] 单元格序列对齐`);
+
+                // Use the NEW colOrder directly
+                const cellSorter = new GlobalSequenceOptimizer(newColOrder, data.grid, addLog);
+
+                // [Debug] 检查 masterSeqs 是否正确传递
+                addLog(`[Debug] masterSeqs 状态: ${masterSeqs ? Object.keys(masterSeqs).length + '列' : 'NULL'}`);
+
+                const cellResult = await cellSorter.run(
+                    500000, // iterations
+                    (layout, s) => {
+                        setCellLayout(layout);
+                        setLayoutScore(Math.floor(s)); // [Fix] Update UI Score Live
+                    },
+                    stopRef,
+                    masterSeqs // [Fix] Pass existing masterSeqs as 'Champion'
+                );
+
+                if (stopRef.current) { addLog("优化已中止"); setStatus('ready'); return; }
+
+                setMasterSeqs(cellSorter.masterSeqs);
+                setCellLayout(cellResult.layout);
+                setLayoutScore(Math.floor(cellResult.score));
+                addLog(`深度优化完成。Final TSP: ${colResult.score}, Final LAY: ${Math.floor(cellResult.score)}`);
+                setStatus('ready');
+            };
+
+            // ... Inside Return JSX for Logs ...
+            // <div className="h-40 overflow-y-auto ...">
+            //    {logs.map((l, i) => {
+            //        const isHighlight = l.includes("Breakthrough") || l.includes("New Best") || l.includes("Final Score");
+            //        return (
+            //          <div key={i} style={{ 
+            //              color: isHighlight ? '#4ade80' : '#9ca3af',
+            //              fontWeight: isHighlight ? 'bold' : 'normal'
+            //          }}>{l}</div>
+            //        );
+            //    })}
+            // </div>
+
+
+
+            const handleFile = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => parseContent(evt.target.result, file.name.endsWith('.json'));
+                reader.readAsText(file);
+                e.target.value = '';
+            };
+
+            // [New] 加载远程 CSV
+            const loadRemoteCSV = async (url = null, preloadedColOrder = null, preloadedMasterSeqs = null) => {
+                const GOOGLE_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSMSHMYH-_pI-2v9bqP-1Balz19zzjAW9QyykU5D1GsfnGVV4Xt-OwPjOlFKPwQL2rQ9EVGCgl7ikCs/pub?gid=0&single=true&output=csv";
+                const LOCAL_CSV = "history_data.csv";
+
+                let targetUrl = url || GOOGLE_CSV;
+                addLog(`正在尝试加载数据: ${targetUrl}...`);
+
+                const tryFetch = async (u) => {
+                    // 添加时间戳防缓存
+                    const fetchUrl = u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
+                    const res = await fetch(fetchUrl);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    return await res.text();
+                };
+
+                try {
+                    const text = await tryFetch(targetUrl);
+                    addLog("数据下载完成，开始解析...");
+                    parseContent(text, false, preloadedColOrder, preloadedMasterSeqs);
+                } catch (e) {
+                    addLog(`加载失败 (${targetUrl}): ${e.message}`);
+                    if (!url && targetUrl === GOOGLE_CSV) {
+                        addLog(`正在尝试降级加载本地文件: ${LOCAL_CSV}...`);
+                        try {
+                            const localText = await tryFetch(LOCAL_CSV);
+                            addLog("本地数据下载完成，开始解析...");
+                            parseContent(localText, false, preloadedColOrder, preloadedMasterSeqs);
+                        } catch (e2) {
+                            addLog(`本地加载也失败了: ${e2.message}`);
+                            alert(`无法加载云端或本地数据，请检查网络或手动上传。`);
+                        }
+                    } else {
+                        alert(`无法加载 ${targetUrl}: ${e.message}`);
+                    }
+                }
+            };
+
+            // [New] 自动运行逻辑
+            useEffect(() => {
+                const params = new URLSearchParams(window.location.search);
+                const csvUrl = params.get('csv');
+                const autorun = params.get('autorun');
+
+                let loadedLayout = null;
+
+                // 1. 总是尝试加载 layout.json 以恢复模具 (Column Order)
+                fetch('layout.json?t=' + Date.now())
+                    .then(res => {
+                        if (res.ok) return res.text();
+                        throw new Error('No layout.json');
+                    })
+                    .then(async text => {
+                        addLog("发现 layout.json，正在恢复列顺序模具...");
+                        // 解析并保存，但不依赖 State
+                        loadedLayout = await parseContent(text, true);
+                    })
+                    .catch(() => addLog("未找到 layout.json 或加载失败，将使用默认或新生成的布局。"))
+                    .finally(() => {
+                        const preloadedOrder = loadedLayout ? loadedLayout.colOrder : null;
+                        const preloadedSeqs = loadedLayout ? loadedLayout.masterSeqs : null;
+
+                        // 2. 加载数据 (CSV)
+                        if (csvUrl) {
+                            loadRemoteCSV(csvUrl, preloadedOrder, preloadedSeqs);
+                        } else if (autorun === 'true') {
+                            // 不传参，使用 loadRemoteCSV 内部定义的默认逻辑 (Google -> history_data.csv)
+                            loadRemoteCSV(null, preloadedOrder, preloadedSeqs);
+                        } else {
+                            // [Fix] Default behavior: Load remote CSV anyway
+                            loadRemoteCSV(null, preloadedOrder, preloadedSeqs);
+                        }
+                    });
+            }, []);
+
+            const handleStop = () => {
+                stopRef.current = true;
+                addLog("用户请求停止...");
+            };
+
+
+
+            const runColumnOptimizer = async () => {
+                if (!data) return;
+                setStatus('ranking');
+                stopRef.current = false;
+
+                const perspective = PERSPECTIVES[selectedPerspective];
+                addLog(`=== 步骤 1: 高级列排序 (TSP Deep Search) ===`);
+                addLog(`视角: ${perspective.name}`);
+                addLog("正在预计算亲和度矩阵 (含地理偏好)...");
+
+                const sorter = new AdvancedColumnSorter(data.regions, data.grid, data.names, addLog);
+                await sorter.precompute();
+
+                // [New] Apply Perspective Weights
+                if (!perspective.isDefault) {
+                    addLog(`应用视角权重...`);
+
+                    // Extract core regions
+                    const coreRegions = new Set();
+                    const regimeGroups = extractRegimeGroupsFromGrid(data.grid, data.regions);
+
+                    regimeGroups.forEach(group => {
+                        if (perspective.coreRegimes.includes(group.id)) {
+                            group.regions.forEach(r => coreRegions.add(r));
+                        }
+                    });
+
+                    addLog(`核心区域: ${coreRegions.size} 列 (${Array.from(coreRegions).join(', ')})`);
+
+                    // Apply weights to matrix
+                    const n = data.regions.length;
+                    for (let i = 0; i < n; i++) {
+                        for (let j = 0; j < n; j++) {
+                            const rA = data.regions[i];
+                            const rB = data.regions[j];
+
+                            const bothCore = coreRegions.has(rA) && coreRegions.has(rB);
+                            const bothBg = !coreRegions.has(rA) && !coreRegions.has(rB);
+
+                            if (bothCore) {
+                                // Check if same regime
+                                const sameRegime = regimeGroups.some(g => {
+                                    if (!perspective.coreRegimes.includes(g.id)) return false;
+                                    return g.regions.has(rA) && g.regions.has(rB);
+                                });
+
+                                sorter.matrix[i][j] *= sameRegime
+                                    ? perspective.weights.intraRegime
+                                    : perspective.weights.interRegime;
+                            } else if (bothBg) {
+                                sorter.matrix[i][j] *= perspective.weights.background;
+                            } else {
+                                sorter.matrix[i][j] *= perspective.weights.background;
+                            }
+                        }
+                    }
+
+                    addLog(`权重应用完成 (核心×${perspective.weights.intraRegime}, 背景×${perspective.weights.background})`);
+                }
+
+                addLog("开始 SA + 2-Opt 深度搜索 (Max 50M Iters)...");
+                // 运行算法，传入回调实时更新分数 (仅当超越历史最高分时更新 UI)
+                const result = await sorter.run(50000000, (_, score) => {
+                    if (score > tspBestScore) setTspBestScore(score);
+                }, stopRef);
+
+                // 防退化检查
+                if (result.score > tspBestScore) {
+                    addLog(`新纪录！Score: ${result.score} (旧: ${tspBestScore})`);
+                    setTspBestScore(result.score);
+                    setColOrder(result.path);
+                } else {
+                    addLog(`未发现更优解 (Current: ${result.score} vs Best: ${tspBestScore})。保持原样。`);
+                }
+
+                addLog("列排序步骤结束。");
+                setStatus('ready');
+            };
+
+            // Helper: Extract regime groups from grid
+            const extractRegimeGroupsFromGrid = (grid, regions) => {
+                const groups = new Map();
+
+                regions.forEach(r => {
+                    Object.entries(grid[r] || {}).forEach(([y, set]) => {
+                        set.forEach(regimeId => {
+                            const id = regimeId.trim();
+                            if (!groups.has(id)) {
+                                groups.set(id, { id, regions: new Set() });
+                            }
+                            groups.get(id).regions.add(r);
+                        });
+                    });
+                });
+
+                return Array.from(groups.values()).filter(g => g.regions.size >= 1);
+            };
+
+            const runCellOptimizer = async () => {
+                if (!data) return;
+                setStatus('layout');
+                stopRef.current = false;
+                addLog("=== 步骤 2: 全局序列对齐 (Master Sequence) ===");
+                addLog("构建永恒政权序列，确保绝对继承与反向传播...");
+
+                const sorter = new GlobalSequenceOptimizer(colOrder, data.grid, addLog);
+
+                // [Fix] 添加调试日志
+                addLog(`[Debug] masterSeqs 状态: ${masterSeqs ? Object.keys(masterSeqs).length + '列' : 'NULL'}`);
+
+                // 传入回调，同时更新 Layout 和 Score
+                const result = await sorter.run(
+                    500000,
+                    (layout, score) => {
+                        setCellLayout(layout);
+                        if (score !== undefined) setLayoutScore(score);
+                    },
+                    stopRef,
+                    masterSeqs // [Fix] 传入已有的 masterSeqs 作为起点
+                );
+
+                setMasterSeqs(sorter.masterSeqs);
+                setCellLayout(result.layout);
+                setLayoutScore(result.score); // 使用真实最终得分
+                addLog(`所有优化完成。最终 LayScore: ${result.score}`);
+                setStatus('done');
+            };
+
+            const handleFlip = () => {
+                const newFlipped = !isFlipped;
+                setIsFlipped(newFlipped);
+
+                // 1. 翻转列顺序
+                setColOrder(prev => [...prev].reverse());
+
+                // 2. 翻转单元格内顺序 (Master Seqs need to be reversed too if we want true flip, but usually visuals are enough. Actually, LAY doesn't care about internal order for flip, but rendering does.)
+                // For visual consistency, let's reverse the masterSeqs effectively by reversing the layout arrays
+                setCellLayout(prev => {
+                    const next = {};
+                    Object.keys(prev).forEach(id => {
+                        next[id] = {};
+                        Object.keys(prev[id]).forEach(y => {
+                            next[id][y] = [...prev[id][y]].reverse();
+                        });
+                    });
+                    return next;
+                });
+
+                addLog(`布局已${newFlipped ? '翻转' : '还原'} (North/South)`);
+            };
+
+            // === Column Drag & Drop Handlers ===
+            // === Interactive Sequence Adjustment ===
+            const startManualAdjustment = () => {
+                setInteractionMode('select-region');
+                addLog("[Manual] 请点击选择要修改的地区（列标题）");
+            };
+
+            const handleHeaderClick = (index) => {
+                if (interactionMode !== 'select-region') return;
+                const colId = colOrder[index];
+                setTargetRegion(colId);
+                setInteractionMode('select-regime-a');
+                addLog(`[Manual] 已选择地区: ${data.names[colId]}。请点击要移动的政权 (A)`);
+            };
+
+            const handleRegimeClick = (regime, colId) => {
+                if (colId !== targetRegion && interactionMode.startsWith('select-regime')) {
+                    addLog(`[Manual] 错误：请选择当前地区 (${data.names[targetRegion]}) 内的政权`);
+                    return;
+                }
+
+                if (interactionMode === 'select-regime-a') {
+                    setMoveRegimeA(regime);
+                    setInteractionMode('select-regime-b');
+                    addLog(`[Manual] 已选择移动对象: ${regime.split('|')[0]}。请点击目标位置的参照政权 (B)，A 将被插入到 B 之前。`);
+                } else if (interactionMode === 'select-regime-b') {
+                    // Prevent same regime
+                    if (regime === moveRegimeA) return;
+
+                    setMoveRegimeB(regime);
+                    setInteractionMode('confirm-move');
+
+                    try {
+                        // Pre-calculate score
+                        const rA = moveRegimeA;
+                        const rB = regime;
+
+                        // [Fix] Must initialize weights via init()
+                        const sorter = new GlobalSequenceOptimizer(colOrder, data.grid, () => { });
+                        sorter.init(JSON.parse(JSON.stringify(masterSeqs)));
+
+                        const oldScore = sorter.calculateGlobalScore(sorter.masterSeqs);
+
+                        // Simulate Move: Insert A before B
+                        const seq = sorter.masterSeqs[targetRegion];
+                        const idxA = seq.indexOf(rA);
+                        let idxB = seq.indexOf(rB);
+
+                        // Remove A first
+                        seq.splice(idxA, 1);
+                        // Re-find B (index might shift if A was before B)
+                        idxB = seq.indexOf(rB);
+                        // Insert A at B
+                        seq.splice(idxB, 0, rA);
+
+                        sorter.masterSeqs[targetRegion] = seq;
+                        const newScore = sorter.calculateGlobalScore(sorter.masterSeqs);
+
+                        setScoreComparison({ old: Math.floor(oldScore), new: Math.floor(newScore) });
+                        addLog(`[Manual] 预计算完成。原分: ${Math.floor(oldScore)} -> 新分: ${Math.floor(newScore)}`);
+                    } catch (e) {
+                        console.error(e);
+                        addLog(`[Error] 预计算失败: ${e.message}`);
+                        setInteractionMode('select-regime-b'); // Revert
+                    }
+                }
+            };
+
+            const confirmMove = () => {
+                try {
+                    const sorter = new GlobalSequenceOptimizer(colOrder, data.grid, () => { });
+                    sorter.init(JSON.parse(JSON.stringify(masterSeqs)));
+
+                    const seq = sorter.masterSeqs[targetRegion];
+                    const rA = moveRegimeA;
+                    const rB = moveRegimeB;
+
+                    const idxA = seq.indexOf(rA);
+                    seq.splice(idxA, 1);
+                    const idxB = seq.indexOf(rB);
+                    seq.splice(idxB, 0, rA);
+
+                    // Update State
+                    setMasterSeqs(sorter.masterSeqs);
+                    const newLayout = sorter.generateLayout(sorter.masterSeqs);
+                    setCellLayout(newLayout);
+                    setLayoutScore(scoreComparison?.new || sorter.calculateGlobalScore(sorter.masterSeqs));
+
+                    addLog(`[Manual] 修改已应用。`);
+                    resetManualMode();
+                } catch (e) {
+                    console.error(e);
+                    addLog(`[Error] 应用修改失败: ${e.message}`);
+                }
+            };
+
+            const cancelMove = () => {
+                addLog(`[Manual] 操作已取消。`);
+                resetManualMode();
+            };
+
+            const resetManualMode = () => {
+                setInteractionMode('idle');
+                setTargetRegion(null);
+                setMoveRegimeA(null);
+                setMoveRegimeB(null);
+                setScoreComparison(null);
+            };
+
+            // === Column Drag (Keep this for column reordering only) ===
+            const handleDragStart = (e, index) => {
+                setDraggedCol(index);
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("type", "column");
+            };
+
+            const handleDragOver = (e, index) => {
+                e.preventDefault();
+                if (draggedCol === null || draggedCol === index) return;
+            };
+
+            const handleDrop = (e, targetIndex) => {
+                e.preventDefault();
+                if (e.dataTransfer.getData("type") !== "column") return;
+                if (draggedCol === null || draggedCol === targetIndex) return;
+                const newOrder = [...colOrder];
+                const [removed] = newOrder.splice(draggedCol, 1);
+                newOrder.splice(targetIndex, 0, removed);
+                setColOrder(newOrder);
+                setDraggedCol(null);
+                addLog(`列已手动重排: ${data.names[removed] || removed} -> Position ${targetIndex}`);
+            };
+
+            const totalYears = CONFIG.MAX_YEAR - CONFIG.MIN_YEAR + 1;
+            const totalH = totalYears * CONFIG.ROW_HEIGHT;
+            const startIdx = Math.floor(scrollTop / CONFIG.ROW_HEIGHT);
+            const endIdx = Math.min(totalYears, startIdx + Math.ceil(viewportH / CONFIG.ROW_HEIGHT) + 2);
+            const visibleYears = [];
+            for (let i = startIdx; i < endIdx; i++) visibleYears.push(CONFIG.MIN_YEAR + i);
+
+            const exportJSON = () => {
+                const out = {
+                    colOrder,
+                    layout: cellLayout,
+                    names: data.names,
+                    masterSeqs: masterSeqs, // 导出模具
+                    tspScore: tspBestScore
+                };
+                const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'layout.json'; a.click();
+            };
+            // [New] 根据视角使用不同 ID
+            const saveToDB = () => {
+                if (!data || !cellLayout) return;
+
+                const perspective = data.perspective || "default";
+                // [Fix] Panorama reads 'current' by default. Match that behavior.
+                const layoutId = perspective === "default" ? "current" : `layout_${perspective}`;
+
+                // [CRITICAL] The actual payload data containing the layout info
+                const payload = {
+                    names: data.names,
+                    codes: data.codes,
+                    masterSeqs: masterSeqs,
+                    layout: cellLayout,
+                    colOrder: colOrder, // [Fix] Include column order!
+                    grid: data.grid,
+                    perspective: perspective,
+                    timestamp: Date.now()
+                };
+
+                // [Ultimate Fix] Save to LocalStorage immediately as a mirror backup
+                // Panorama's loadFromMirror expects the payload DIRECTLY (no 'data' wrapper).
+                try {
+                    localStorage.setItem('layout_mirror', JSON.stringify(payload));
+                    console.log("[System] LocalStorage mirror updated.");
+                } catch (e) { console.warn("LS Backup Failed", e); }
+
+                const request = indexedDB.open("EastAsiaHistoryDB");
+
+                request.onupgradeneeded = function (event) {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains("layouts")) {
+                        db.createObjectStore("layouts", { keyPath: "id" });
+                    }
+                };
+
+                request.onsuccess = function (event) {
+                    const db = event.target.result;
+                    const transaction = db.transaction(["layouts"], "readwrite");
+                    const store = transaction.objectStore("layouts");
+
+                    // [CRITICAL] Panorama expects DB entry to be { id: "current", data: payload }
+                    // Wraps the payload in a 'data' property.
+
+                    // 1. Save strictly as 'current' (This is what Panorama reads)
+                    const entryCurrent = { id: 'current', data: payload };
+                    store.put(entryCurrent);
+
+                    // 2. Save as specific ID (if different)
+                    if (layoutId !== 'current') {
+                        const entrySpecific = { id: layoutId, data: payload };
+                        store.put(entrySpecific);
+                    }
+
+                    transaction.oncomplete = function () {
+                        // [Debug] Verify persistence
+                        const verifyReq = indexedDB.open("EastAsiaHistoryDB");
+                        verifyReq.onsuccess = (ev) => {
+                            const db2 = ev.target.result;
+                            const tx2 = db2.transaction(["layouts"], "readonly");
+                            const st2 = tx2.objectStore("layouts");
+                            const get2 = st2.get("current");
+                            get2.onsuccess = () => {
+                                if (get2.result && get2.result.data && get2.result.data.layout) {
+                                    addLog(`[System] ✅ 成功写入 DB 并通过自检 (ID: current)`);
+                                    if (confirm(`布局已保存为 [${layoutId}]！\n是否跳转到全景图查看？`)) {
+                                        window.location.href = "panorama.html?t=" + Date.now();
+                                    }
+                                } else {
+                                    alert("❌ 严重错误：写入后的数据结构不符合预期！");
+                                    console.error("Verification failed. Result:", get2.result);
+                                }
+                            };
+                        };
+                    };
+
+                    transaction.onerror = function (e) {
+                        addLog(`[Error] DB 事务失败: ${e.target.error}`);
+                        console.error("Transaction Error", e);
+                    }
+                };
+
+                request.onerror = function (event) {
+                    console.error("IndexedDB Error", event);
+                    alert("无法打开 IndexedDB");
+                };
+            };
+
+            const runFlip = () => { handleFlip(); }; // Wrap handleFlip
+
+            return (
+                <div className="h-full flex flex-col bg-slate-900 text-slate-200">
+                    <div className="glass-panel z-50 px-4 py-3 flex items-center justify-between shadow-xl relative backdrop-blur-md bg-opacity-90 border-b border-slate-700/50">
+                        {/* Left: Branding & Inputs */}
+                        <div className="flex items-center gap-4">
+                            <div className="flex flex-col leading-tight">
+                                <span className="font-bold text-lg text-slate-100 tracking-tight">Layout Optimizer</span>
+                                <span className="text-[10px] text-purple-400 font-mono">v10.0 ULTRA</span>
+                            </div>
+                            <div className="h-8 w-px bg-slate-700/50 mx-2"></div>
+
+                            <div className="flex gap-2">
+                                <label className="btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/50 cursor-pointer">
+                                    <span className="opacity-80">📁 导入</span>
+                                    <input type="file" accept=".csv,.json" onChange={handleFile} className="hidden" ref={fileInputRef} />
+                                </label>
+                                <button onClick={() => loadRemoteCSV()} className="btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/50" title="Google Sheet / Local">
+                                    ☁️ 云端数据
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Center: Controls */}
+                        <div className="absolute left-1/2 -translate-x-1/2 flex gap-2">
+                            {status !== 'ranking' && status !== 'layout' ? (
+                                <>
+                                    <button onClick={runColumnOptimizer} className="btn bg-slate-700 hover:bg-slate-600 text-slate-200 shadow-lg border border-slate-600/50" disabled={!data}>
+                                        1. 列序
+                                    </button>
+                                    <button onClick={runCellOptimizer} className="btn bg-slate-700 hover:bg-slate-600 text-slate-200 shadow-lg border border-slate-600/50" disabled={!data}>
+                                        2. 布局
+                                    </button>
+                                    <div className="w-px h-8 bg-slate-700/50 mx-1"></div>
+                                    <button onClick={runDeepJointOptimization} className="btn bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-900/40 border-0 font-bold px-6" disabled={!data} title="一键运行 TSP 列排序 + Master Seq 布局优化">
+                                        🚀 深度联合优化
+                                    </button>
+                                </>
+                            ) : (
+                                <div className="flex gap-2 items-center bg-slate-800 rounded px-3 border border-slate-700">
+                                    <svg className="w-4 h-4 animate-spin text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                    <span className="text-xs font-mono text-blue-300">{status === 'ranking' ? 'TSP SOLVING...' : 'ALIGNING...'}</span>
+                                    <button onClick={handleStop} className="ml-2 text-xs text-red-400 hover:text-red-300">STOP</button>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Right: Actions & Score */}
+                        <div className="flex items-center gap-4">
+                            {/* Score Board */}
+                            <div className="flex flex-col items-end mr-2 font-mono text-[10px] text-slate-400 cursor-help" title="TSP: 邻接亲和力总分 (越高不仅代表相邻紧密，也代表历史连续性好)&#010;LAY: 全局对齐一致性分数 (越高代表政权继承关系越顺畅)">
+                                <div>TSP: <span className="text-emerald-400">{Math.round(tspBestScore).toLocaleString()}</span></div>
+                                <div>LAY: <span className="text-blue-400">{layoutScore !== 0 ? Math.round(layoutScore).toLocaleString() : '--'}</span></div>
+                            </div>
+                            <div className="h-8 w-px bg-slate-700/50"></div>
+
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={interactionMode === 'idle' ? startManualAdjustment : resetManualMode}
+                                    className={`btn ${interactionMode !== 'idle' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'} text-white border-0`}
+                                    disabled={!data}
+                                    title="手动微调列内政权序列"
+                                >
+                                    {interactionMode !== 'idle' ? '❌ 取消' : '🛠️ 修改序列'}
+                                </button>
+                                <button onClick={saveToDB} className="btn bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/20 border-0" disabled={!data} title="保存到 IndexedDB 供全景图读取">
+                                    💾 写入 DB
+                                </button>
+                                <button onClick={exportJSON} className="btn bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600" disabled={!data} title="导出 JSON 模具">
+                                    📤 导出
+                                </button>
+                                <a href="index.html" className="btn bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600/50" title="返回首页">
+                                    🏠
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Interaction Status Bar */}
+                    {interactionMode !== 'idle' && (
+                        <div className="h-10 bg-amber-900 border-b border-amber-600 flex items-center justify-between px-4 text-xs font-medium text-amber-100 animate-fade-in z-20 shadow-md">
+                            <div className="flex items-center gap-2">
+                                <span className="mr-2 text-amber-400 font-bold">🔧 序列编辑:</span>
+                                {interactionMode === 'select-region' && "请点击选择要修改的地区（列标题）"}
+                                {interactionMode === 'select-regime-a' && <span>已选地区 <span className="text-white px-1 bg-amber-800 rounded">{data.names[targetRegion]}</span>。请点击要移动的政权 (A)</span>}
+                                {interactionMode === 'select-regime-b' && <span>已选 <span className="text-white px-1 bg-amber-800 rounded">{moveRegimeA.split('|')[0]}</span>。请点击目标锚点政权 (B)</span>}
+                                {interactionMode === 'confirm-move' && scoreComparison && (
+                                    <span className="flex items-center gap-2">
+                                        <span>将 <strong className="text-white">{moveRegimeA.split('|')[0]}</strong> 移至 <strong className="text-white">{moveRegimeB.split('|')[0]}</strong> 之前。</span>
+                                        <span className="text-slate-400">|</span>
+                                        <span>分数变化: {scoreComparison.old.toLocaleString()} <span className="text-slate-400">→</span> <span className={`${scoreComparison.new > scoreComparison.old ? 'text-emerald-400' : (scoreComparison.new < scoreComparison.old ? 'text-rose-400' : 'text-white')} font-bold`}>{scoreComparison.new.toLocaleString()}</span></span>
+                                    </span>
+                                )}
+                            </div>
+
+                            {interactionMode === 'confirm-move' && (
+                                <div className="flex gap-2">
+                                    <button onClick={cancelMove} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-xs border border-slate-500">
+                                        ❌ 取消
+                                    </button>
+                                    <button onClick={confirmMove} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold shadow-lg border border-emerald-400">
+                                        ✅ 确认修改
+                                    </button>
+                                </div>
+                            )}
+
+                            {interactionMode !== 'confirm-move' && (
+                                <button onClick={resetManualMode} className="text-amber-400/60 hover:text-amber-200 text-xs">退出</button>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="flex-1 overflow-hidden relative flex flex-col pt-[1px]">
+                        {data ? (
+                            <div
+                                className="matrix-viewport"
+                                onScroll={(e) => setScrollTop(e.target.scrollTop)}
+                                ref={(el) => { if (el) { gridRef.current = el; if (el.clientHeight !== viewportH) setViewportH(el.clientHeight); } }}
+                            >
+                                <div style={{ height: totalH, width: 60 + colOrder.length * CONFIG.COL_WIDTH, position: 'relative' }}>
+                                    <div className="header-row" style={{ width: '100%', minWidth: 'max-content' }}>
+                                        {/* Flip Button (Icon) */}
+                                        <div
+                                            className="header-cell sticky left-0 z-[60] w-[60px] bg-slate-800 border-r border-slate-600 text-slate-400 cursor-pointer hover:bg-slate-700 hover:text-emerald-400 transition-colors flex justify-center items-center"
+                                            onClick={handleFlip}
+                                        >
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                            </svg>
+                                        </div>
+                                        {colOrder.map((id, index) => {
+                                            const isSelected = targetRegion === id;
+                                            const isModeSelectRegion = interactionMode === 'select-region';
+                                            return (
+                                                <div
+                                                    key={id}
+                                                    className={`header-cell ${draggedCol === index ? 'opacity-50 dashed-border' : ''} ${isSelected ? 'bg-amber-800/80 text-amber-100 ring-2 ring-amber-500 z-50' : ''} ${isModeSelectRegion ? 'cursor-pointer hover:bg-amber-900/50 ring-1 ring-amber-500/30' : 'cursor-move hover:bg-slate-700'} transition-all select-none`}
+                                                    style={{ width: CONFIG.COL_WIDTH }}
+                                                    title={data.names[id] || id}
+                                                    draggable={interactionMode === 'idle'} // Only allow drag when idle
+                                                    onDragStart={(e) => handleDragStart(e, index)}
+                                                    onDragOver={(e) => handleDragOver(e, index)}
+                                                    onDrop={(e) => handleDrop(e, index)}
+                                                    onClick={() => handleHeaderClick(index)}
+                                                >
+                                                    {data.names[id] || id}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    {visibleYears.map(year => (
+                                        <div key={year} className="data-row" style={{ top: (year - CONFIG.MIN_YEAR) * CONFIG.ROW_HEIGHT + 36, height: CONFIG.ROW_HEIGHT }}>
+                                            <div className="year-col-container flex items-center justify-center h-full">
+                                                <div className="font-mono text-[10px] text-slate-500">{year}</div>
+                                            </div>
+                                            {colOrder.map(id => {
+                                                const regimes = cellLayout[id]?.[year] || [];
+                                                return (
+                                                    <div key={id} className="data-cell" style={{ width: CONFIG.COL_WIDTH }}>
+                                                        {regimes.map(r => {
+                                                            const isSelectedA = moveRegimeA === r;
+                                                            const isSelectedB = moveRegimeB === r;
+                                                            const isInteractive = (interactionMode === 'select-regime-a' && targetRegion === id) || (interactionMode === 'select-regime-b' && targetRegion === id);
+
+                                                            return (
+                                                                <div key={r}
+                                                                    className={`regime-block ${isSelectedA ? 'ring-2 ring-amber-400 z-10 scale-105' : ''} ${isSelectedB ? 'ring-2 ring-blue-400 z-10' : ''} ${isInteractive ? 'cursor-pointer hover:opacity-80' : ''}`}
+                                                                    style={{ backgroundColor: calcColor(r.split('|')[1] || data.codes[r.split('|')[0]] || r) }}
+                                                                    title={r}
+
+                                                                    // Click for new mode
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleRegimeClick(r, id);
+                                                                    }}
+                                                                >
+                                                                    {r.split('|')[0]}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 bg-slate-950">
+                                <p className="text-sm font-medium">请导入 CSV 数据文件 / JSON 模具</p>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="h-32 bg-slate-950 border-t border-slate-800 flex flex-col font-mono text-[10px] shadow-inner-lg z-50">
+                        <div className="px-4 py-1 bg-slate-900 border-b border-slate-800 text-slate-500 flex justify-between items-center">
+                            <div className="flex items-center gap-3">
+                                <span>CONSOLE LOG</span>
+                                <button
+                                    onClick={() => navigator.clipboard.writeText(logs.join('\n'))}
+                                    className="text-[9px] px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-slate-400 hover:text-white transition-colors cursor-pointer"
+                                    title="Copy full logs to clipboard"
+                                >
+                                    COPY
+                                </button>
+                            </div>
+                            <span className={status === 'ranking' || status === 'layout' ? 'text-blue-400 animate-pulse' : 'text-emerald-500'}>
+                                {status === 'idle' ? 'IDLE' : status.toUpperCase()}
+                            </span>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2 space-y-1 text-slate-400">
+                            {logs.map((l, i) => (
+                                <div key={i} ref={i === logs.length - 1 ? logEndRef : null}>{l}</div>
+                            ))}
+                        </div>
+                    </div>
+                </div >
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
