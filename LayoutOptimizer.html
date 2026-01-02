@@ -2311,7 +2311,7 @@
                 } catch (e) { console.warn("LS Backup Failed", e); }
 
                 // [Fix] Explicitly use version 3 to trigger schema upgrade for users who possess legacy DB
-                const request = indexedDB.open("EastAsiaHistoryDB", 3);
+                const request = indexedDB.open("EastAsiaHistoryDB", 4);
 
                 request.onupgradeneeded = function (event) {
                     const db = event.target.result;

@@ -1196,8 +1196,17 @@
 
                 // 策略 1: 尝试读取 IndexedDB (更新版本号至 3 以匹配 LayoutOptimizer)
                 try {
-                    const req = indexedDB.open("EastAsiaHistoryDB", 3);
+                    const req = indexedDB.open("EastAsiaHistoryDB", 4);
                     req.onerror = () => { console.warn("DB Open Failed"); loadFromMirror(); };
+
+                    // [Fix] Ensure layouts store exists even if Panorama opens DB first
+                    req.onupgradeneeded = (e) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains("layouts")) {
+                            db.createObjectStore("layouts", { keyPath: "id" });
+                            console.log("[DB] Created 'layouts' store during upgrade");
+                        }
+                    };
 
                     req.onsuccess = (e) => {
                         const db = e.target.result;
