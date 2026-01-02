@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Layout Optimizer - v09.00</title>
+    <title>Layout Optimizer - v10.00</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
     <script crossorigin
@@ -2271,13 +2271,24 @@
             for (let i = startIdx; i < endIdx; i++) visibleYears.push(CONFIG.MIN_YEAR + i);
 
             const exportJSON = () => {
+                // [v10] 生成版本号 YYYYMMDDHHmmss
+                const now = new Date();
+                const version = now.getFullYear().toString() +
+                    String(now.getMonth() + 1).padStart(2, '0') +
+                    String(now.getDate()).padStart(2, '0') +
+                    String(now.getHours()).padStart(2, '0') +
+                    String(now.getMinutes()).padStart(2, '0') +
+                    String(now.getSeconds()).padStart(2, '0');
+
                 const out = {
+                    version,  // 版本号，用于客户端缓存策略
                     colOrder,
                     layout: cellLayout,
                     names: data.names,
-                    masterSeqs: masterSeqs, // 导出模具
+                    masterSeqs: masterSeqs,
                     tspScore: tspBestScore
                 };
+                console.log(`[Export] layout.json with version: ${version}`);
                 const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -2291,27 +2302,30 @@
                 // [Fix] Panorama reads 'current' by default. Match that behavior.
                 const layoutId = perspective === "default" ? "current" : `layout_${perspective}`;
 
-                // [CRITICAL] The actual payload data containing the layout info
+                // [v10] 生成版本号用于 DB 存储
+                const now = new Date();
+                const version = now.getFullYear().toString() +
+                    String(now.getMonth() + 1).padStart(2, '0') +
+                    String(now.getDate()).padStart(2, '0') +
+                    String(now.getHours()).padStart(2, '0') +
+                    String(now.getMinutes()).padStart(2, '0') +
+                    String(now.getSeconds()).padStart(2, '0');
+
+                // [v10] Payload now includes version
                 const payload = {
+                    version,  // 版本号
                     names: data.names,
                     codes: data.codes,
                     masterSeqs: masterSeqs,
                     layout: cellLayout,
-                    colOrder: colOrder, // [Fix] Include column order!
+                    colOrder: colOrder,
                     grid: data.grid,
                     perspective: perspective,
                     timestamp: Date.now()
                 };
 
-                // [Ultimate Fix] Save to LocalStorage immediately as a mirror backup
-                // Panorama's loadFromMirror expects the payload DIRECTLY (no 'data' wrapper).
-                try {
-                    localStorage.setItem('layout_mirror', JSON.stringify(payload));
-                    console.log("[System] LocalStorage mirror updated.");
-                } catch (e) { console.warn("LS Backup Failed", e); }
-
-                // [Fix] Explicitly use version 3 to trigger schema upgrade for users who possess legacy DB
-                const request = indexedDB.open("EastAsiaHistoryDB", 4);
+                // [Fix] Explicitly use version 5 to trigger schema upgrade for users who possess legacy DB
+                const request = indexedDB.open("EastAsiaHistoryDB", 5);
 
                 request.onupgradeneeded = function (event) {
                     const db = event.target.result;
