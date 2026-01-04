@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v11.00)</title>
+    <title>东亚历史全景 (v11.01)</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.04.001';
+        window.APP_VERSION = '2026.01.04.003';
     </script>
 
     <!-- [Unified CSS] Native Style (Merged) -->
@@ -1361,8 +1361,14 @@
                         const appState = payload;
 
                         // 1. 同步年份（使用全景的滚动方法）
+                        // 1. 同步年份（使用全景的滚动方法）
                         if (appState.year !== undefined && window.scrollToYear) {
-                            window.scrollToYear(appState.year);
+                            // [Fix] User Priority: 用户正在交互时，忽略外部同步以防止冲突 (与 map.html 行为一致)
+                            if (this._userScrolling) {
+                                // console.log('User interacting, skip sync');
+                            } else {
+                                window.scrollToYear(appState.year);
+                            }
                         }
 
                         // 2. 同步选中的政权（如果有高亮方法）
@@ -1407,9 +1413,18 @@
 
                 let scrollTimer = null;
                 let isProgrammaticScroll = false;
+                let userScrollEndTimer = null;
+                this._userScrolling = false;
 
                 mainContent.addEventListener('scroll', () => {
                     if (isProgrammaticScroll) return;
+
+                    // 标记用户正在滚动
+                    this._userScrolling = true;
+                    clearTimeout(userScrollEndTimer);
+                    userScrollEndTimer = setTimeout(() => {
+                        this._userScrolling = false;
+                    }, 400); // 稍微长于更新频率
 
                     // 节流：滚动停止300ms后才更新状态（避免高频postMessage）
                     clearTimeout(scrollTimer);

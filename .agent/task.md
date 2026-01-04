@@ -52,14 +52,31 @@
   - 统一 postMessage schema
 
 ### 性能优化
-- [ ] **Web Worker 计算** <!-- id: a2 -->
-  - 创建 `layout-worker.js`（待重试）
+- [x] **Web Worker 计算** <!-- id: a2 -->
+  - 创建 `layout-worker.js`
   - 将 TSP/遗传算法移入 Worker
+  - 实现模拟退火优化算法
 
 ### 数据一致性
 - [ ] **CSV-Layout 校验增强** <!-- id: a3 -->
   - 自动提示布局失效
   - 增量更新机制
+
+### Layout Optimizer 修复 (Completed: 2026-01-04)
+- [x] **Debug Empty Layout Output** <!-- id: 3 -->
+  - [x] 分析 `generateLayout` 和数据传递机制 <!-- id: 4 -->
+  - [x] 修复 `LayoutOptimizer.html` 使用字符串 `layout` 而非整数 `masterSeqs` <!-- id: 5 -->
+  - **根因**：Worker 返回整数ID序列，主线程错误地用于渲染导致空布局
+
+- [x] **渐进式恢复系统** <!-- id: 6 -->
+  - [x] 实现时间+分数双重保护机制 <!-- id: 7 -->
+  - [x] 移除独立的 Strategy E (Jump to Best)，集成到 C/D 策略中 <!-- id: 8 -->
+  - **策略权重重新分配**: A=35%, B=25%, C=20%, D=20%
+  - **恢复规则**:
+    - 分数下降 >30%: 立即 Jump to Best
+    - 10k 次后 <90%: Jump to Best
+    - 20k 次后 <95%: Jump to Best
+    - 30k 次后 <100%: Jump to Best
 
 ---
 
@@ -72,9 +89,31 @@
 
 ---
 
+## 📦 版本控制系统
+
+### 双轨策略
+- **语义版本号** (`<title>` 中): 人类可读，如 v5.01
+- **技术版本号** (`APP_VERSION`): 缓存控制，如 2026.01.04.003
+
+### 缓存策略
+| 资源类型 | 策略 | 示例 |
+|---------|------|------|
+| 代码文件 (HTML/JS/Worker) | `?v=APP_VERSION` | 发布时更新 |
+| 数据文件 (CSV/JSON) | `?t=Date.now()` | 每次请求最新 |
+
+### 发布检查清单
+- [ ] 更新四个 HTML 的 `<title>` 语义版本号
+- [ ] 更新四个 HTML 的 `window.APP_VERSION`
+- [ ] 更新此文件的版本历史
+
+---
+
 ## 📊 版本历史
 
 | 日期 | 版本号 | 主要变更 |
 |------|--------|----------|
 | 2026-01-04 | 2026.01.04.001 | 版本机制 + SRI + 缓存优化 |
 | 2026-01-04 | 2026.01.04.002 | Babel移除 + postMessage安全 + AppState单向数据流 |
+| 2026-01-04 | 2026.01.04.003 | Layout Optimizer 修复 + 渐进式恢复系统 + 版本控制统一 |
+
+

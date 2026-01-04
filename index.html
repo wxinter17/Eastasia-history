@@ -4,14 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史交互地图系统 (v5.00)</title>
+    <title>东亚历史交互地图系统 (v5.01)</title>
 
     <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
     <script>
-        window.APP_VERSION = '2026.01.04.001';
+        window.APP_VERSION = '2026.01.04.003';
         window.APP_CONFIG = {
-            VERSION: '5.0.0',
-            BUILD_DATE: '2026-01-04',
             // 缓存版本检查
             checkCache: function () {
                 const storedVersion = localStorage.getItem('APP_VERSION');
@@ -867,8 +865,13 @@
         </div>
     </div>
 
-    <iframe id="iframe-map" src="map.html?v=3.03" class="view-container view-active"></iframe>
-    <iframe id="iframe-panorama" src="panorama.html?v=3.03" class="view-container view-hidden"></iframe>
+    <iframe id="iframe-map" class="view-container view-active"></iframe>
+    <iframe id="iframe-panorama" class="view-container view-hidden"></iframe>
+    <script>
+        // [Fix] 动态设置 iframe src，使用 APP_VERSION 确保缓存刷新
+        document.getElementById('iframe-map').src = 'map.html?v=' + window.APP_VERSION;
+        document.getElementById('iframe-panorama').src = 'panorama.html?v=' + window.APP_VERSION;
+    </script>
 
     <div id="debug-trigger" onclick="document.getElementById('debug-console').style.display='flex'">🐞</div>
     <div id="debug-console">
