@@ -4,7 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>History Map View (v15.00)</title>
+    <title>History Map View (v16.00)</title>
+
+    <!-- 🔑 全局版本控制 -->
+    <script>
+        window.APP_VERSION = '2026.01.04.001';
+    </script>
 
     <script>
         window.onerror = function (msg, url, line, col, error) {
@@ -14,7 +19,9 @@
         };
     </script>
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Leaflet with SRI -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous" />
     <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -947,7 +954,7 @@
                     <div class="waterfall-content" id="waterfall-content"></div>
                 </div>
                 <div id="fixed-cursor">
-                    <div id="cursor-year-btn">2024</div>
+                    <div id="cursor-year-btn">-2070</div>
                 </div>
             </div>
         </div>
@@ -1294,18 +1301,69 @@
                     // 8. 导出 GeoJSON 请求 (返回字符串格式)
                     if (type === 'CMD_REQ_GEOJSON') {
                         const geojson = MapCtrl.getCompactGeoJSON();
-                        window.parent.postMessage({ type: 'CMD_GEOJSON_DATA', payload: geojson }, '*');
+                        window.parent.postMessage({ type: 'CMD_GEOJSON_DATA', payload: geojson }, window.location.origin);
                     }
 
                     // 9. 导入 GeoJSON
                     if (type === 'CMD_SET_GEOJSON') {
                         MapCtrl.loadGeoJSON(payload);
                     }
+
+                    // === 10. 全局状态同步（单向数据流：父→子） ===
+                    if (type === 'STATE_SYNC') {
+                        // 接收父页面的全局状态，更新本地视图
+                        const appState = payload;
+
+                        // 1. 同步年份
+                        if (appState.year !== undefined) {
+                            // 更新本地State
+                            State.currentYear = appState.year;
+
+                            // 更新按钮显示
+                            const yearBtn = document.getElementById('cursor-year-btn');
+                            if (yearBtn) yearBtn.innerText = appState.year;
+
+                            // 更新时间轴滚动位置（使用正确的方法）
+                            // 如果用户正在主动滚动，则跳过程序化滚动，避免打断用户
+                            if (typeof TimelineCtrl !== 'undefined' && TimelineCtrl.scrollTo && !TimelineCtrl._userScrolling) {
+                                TimelineCtrl.isProgrammaticScroll = true;
+                                TimelineCtrl.scrollTo(appState.year);
+                                setTimeout(() => { TimelineCtrl.isProgrammaticScroll = false; }, 500);
+                            }
+
+                            // 更新地图高亮
+                            if (MapCtrl && MapCtrl.updateHighlight) {
+                                MapCtrl.updateHighlight(appState.year);
+                            }
+                        }
+
+                        // 2. 同步选中的政权
+                        if (appState.selectedRegime !== undefined) {
+                            if (appState.selectedRegime && UICtrl.highlightRegime) {
+                                UICtrl.highlightRegime(appState.selectedRegime);
+                            } else if (!appState.selectedRegime && UICtrl.clearHighlight) {
+                                UICtrl.clearHighlight();
+                            }
+                        }
+
+                        // 3. 同步锁定状态
+                        if (appState.locked !== undefined) {
+                            // 锁定状态的UI反馈（如果有相关UI）
+                            console.log('[Map] Regime locked:', appState.locked);
+                        }
+
+                        // 调试日志
+                        console.log('[Map] STATE_SYNC received:', {
+                            year: appState.year,
+                            selectedRegime: appState.selectedRegime,
+                            locked: appState.locked
+                        });
+                    }
                 });
 
                 // 通知父级：地图加载完毕
                 if (window.parent !== window) {
-                    window.parent.postMessage({ type: 'CHILD_READY', payload: { source: 'map' } }, '*');
+                    window.parent.postMessage({ type: 'CHILD_READY', payload: { source: 'map' } }, window.location.origin);
                 }
 
                 // 初始化时间轴控制器
@@ -2090,6 +2148,8 @@
 
         const TimelineCtrl = {
             isProgrammaticScroll: false,
+            _userScrolling: false, // 用户是否正在主动滚动
+            _scrollEndTimer: null, // 滚动结束检测计时器
             computedLayouts: [], // 存储所有计算好的切片布局数据
             totalContentHeight: 0,
             _virtualRaf: null,
@@ -2110,6 +2170,19 @@
                         });
                     }
 
+                    // === 用户滚动检测 ===
+                    if (!this.isProgrammaticScroll) {
+                        this._userScrolling = true;
+
+                        // 清除之前的计时器
+                        clearTimeout(this._scrollEndTimer);
+
+                        // 滚动停止300ms后认为用户滚动结束
+                        this._scrollEndTimer = setTimeout(() => {
+                            this._userScrolling = false;
+                        }, 300);
+                    }
+
                     if (this.isProgrammaticScroll) return;
 
                     const midPx = scroller.scrollTop + (scroller.clientHeight / 2);
@@ -2118,6 +2191,17 @@
                     if (State.currentYear !== newYear) {
                         State.currentYear = newYear;
                         document.getElementById('cursor-year-btn').innerText = State.currentYear;
+
+                        // === 单向数据流：请求父页面更新全局状态（节流） ===
+                        clearTimeout(this._stateUpdateTimer);
+                        this._stateUpdateTimer = setTimeout(() => {
+                            if (window.parent && window.parent !== window) {
+                                window.parent.postMessage({
+                                    type: 'STATE_UPDATE_REQUEST',
+                                    payload: { year: newYear }
+                                }, window.location.origin);
+                            }
+                        }, 150); // 150ms节流，减少postMessage频率
 
                         // 使用防抖更新高亮，避免滚动时过频计算
                         if (!this._highlightTimer) {

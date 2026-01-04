@@ -4,8 +4,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史交互地图系统 (v4.00)</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <title>东亚历史交互地图系统 (v5.00)</title>
+
+    <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
+    <script>
+        window.APP_VERSION = '2026.01.04.001';
+        window.APP_CONFIG = {
+            VERSION: '5.0.0',
+            BUILD_DATE: '2026-01-04',
+            // 缓存版本检查
+            checkCache: function () {
+                const storedVersion = localStorage.getItem('APP_VERSION');
+                if (storedVersion && storedVersion !== window.APP_VERSION) {
+                    console.log('🔄 检测到版本更新 (' + storedVersion + ' → ' + window.APP_VERSION + ')');
+                }
+                localStorage.setItem('APP_VERSION', window.APP_VERSION);
+            },
+            // 为 URL 添加版本查询字符串（用于缓存失效）
+            withVersion: function (url) {
+                if (!url) return url;
+                const separator = url.includes('?') ? '&' : '?';
+                return url + separator + 'v=' + window.APP_VERSION;
+            }
+        };
+        window.APP_CONFIG.checkCache();
+    </script>
+
+    <!-- PapaParse with SRI -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"
+        integrity="sha512-dfX5uYVXzyU8+KHqj8bjo7UkOdg18PaOtpa48djpNbZHwExddghZ+ZmzWT06R5v6NSk3ZUfsH6FNEDepLx9hPQ=="
+        crossorigin="anonymous"></script>
     <style>
         /* ... (omitting style for brevity if not matched, but tool needs exact match) */
         /* Wait, I cannot match lines far apart. I will do Title first, then Config. */
@@ -693,7 +721,7 @@
                 <button id="tab-pano" class="tab-btn" onclick="window.EastAsiaApp.switchView('panorama')">全景</button>
             </div>
             <select id="quick-nav" class="quick-nav-select"
-                onchange="window.EastAsiaApp.broadcast('CMD_JUMP', {year: this.value})">
+                onchange="window.EastAsiaApp.setState({year: parseInt(this.value)}); this.selectedIndex = 0;">
                 <option value="" selected>⏱️ 跳转</option>
                 <option value="-2070">夏商</option>
                 <option value="-1046">周</option>
@@ -996,12 +1024,138 @@
             },
 
             state: {
-                currentView: 'map',
+                // === 核心全局状态（单一数据源）===
+                currentView: 'map',          // map | panorama
+                year: -220,                  // 当前时间点
+                selectedRegime: null,        // 当前选中政权ID
+                locked: false,               // 是否锁定政权
+                focusMode: false,            // AI面板是否激活
+
+                // === 系统状态 ===
                 dataReady: false,
                 rawData: null,
                 framesReady: { map: false, panorama: false },
                 apiKey: "",
                 features: { antique: true, borders: false, connections: true }
+            },
+
+            // === 状态管理核心（单向数据流）===
+            _stateListeners: new Set(),
+
+            /**
+             * 设置状态（唯一修改state的入口）
+             * @param {Object} patch - 要更新的状态片段
+             * @param {Object} options - 选项 { silent: boolean, skipURL: boolean }
+             */
+            setState: function (patch, options = {}) {
+                const oldState = { ...this.state };
+
+                // 1. 合并状态
+                Object.assign(this.state, patch);
+
+                // 2. 同步到URL（除非显式跳过）
+                if (!options.skipURL) {
+                    this.syncStateToURL();
+                }
+
+                // 3. 触发订阅者（除非静默模式）
+                if (!options.silent) {
+                    this._stateListeners.forEach(fn => {
+                        try {
+                            fn(this.state, oldState, patch);
+                        } catch (e) {
+                            console.error('[State] Listener error:', e);
+                        }
+                    });
+                }
+
+                // 4. 广播到所有iframe
+                this.broadcastStateSync();
+
+                // 5. 调试日志
+                if (Object.keys(patch).length > 0) {
+                    console.log('[State] Updated:', patch);
+                }
+            },
+
+            /**
+             * 订阅状态变化
+             * @param {Function} callback - (newState, oldState, patch) => void
+             * @returns {Function} 取消订阅函数
+             */
+            subscribe: function (callback) {
+                this._stateListeners.add(callback);
+                // 立即触发一次（初始化）
+                callback(this.state, {}, this.state);
+                // 返回取消订阅函数
+                return () => this._stateListeners.delete(callback);
+            },
+
+            /**
+             * 获取当前状态（只读副本）
+             */
+            getState: function () {
+                return { ...this.state };
+            },
+
+            /**
+             * 同步状态到URL（支持分享和刷新恢复）
+             */
+            syncStateToURL: function () {
+                const params = new URLSearchParams();
+
+                // 只同步核心状态
+                if (this.state.year !== -220) params.set('year', this.state.year);
+                if (this.state.selectedRegime) params.set('regime', this.state.selectedRegime);
+                if (this.state.currentView !== 'map') params.set('view', this.state.currentView);
+                if (this.state.locked) params.set('locked', '1');
+
+                const queryString = params.toString();
+                const newURL = queryString ? '?' + queryString : window.location.pathname;
+
+                // 使用 replaceState 避免破坏浏览器历史
+                window.history.replaceState(null, '', newURL);
+            },
+
+            /**
+             * 从URL恢复状态（启动时调用）
+             */
+            restoreStateFromURL: function () {
+                const params = new URLSearchParams(window.location.search);
+                const patch = {};
+
+                if (params.has('year')) {
+                    const year = parseInt(params.get('year'));
+                    if (!isNaN(year)) patch.year = year;
+                }
+                if (params.has('regime')) patch.selectedRegime = params.get('regime');
+                if (params.has('view')) patch.currentView = params.get('view');
+                if (params.has('locked')) patch.locked = true;
+
+                if (Object.keys(patch).length > 0) {
+                    this.setState(patch, { skipURL: true }); // 避免循环
+                    console.log('[State] Restored from URL:', patch);
+                }
+            },
+
+            /**
+             * 广播状态到所有iframe（单向数据流：父→子）
+             */
+            broadcastStateSync: function () {
+                const message = {
+                    type: 'STATE_SYNC',
+                    payload: this.state
+                };
+
+                const mapFrame = document.getElementById('iframe-map');
+                const panoFrame = document.getElementById('iframe-panorama');
+
+                if (mapFrame && mapFrame.contentWindow && this.state.framesReady.map) {
+                    mapFrame.contentWindow.postMessage(message, window.location.origin);
+                }
+                if (panoFrame && panoFrame.contentWindow && this.state.framesReady.panorama) {
+                    panoFrame.contentWindow.postMessage(message, window.location.origin);
+                }
             },
 
             init: function () {
@@ -1130,6 +1284,17 @@
                     });
                 }
                 this.updateButtonStates();
+
+                // === 从URL恢复状态（支持URL分享） ===
+                this.restoreStateFromURL();
+
+                // === 订阅状态变化，自动更新UI ===
+                this.subscribe((newState, oldState, patch) => {
+                    // 视图切换时更新UI
+                    if (patch.currentView) {
+                        this._updateViewUI(newState.currentView);
+                    }
+                });
             },
 
             log: function (msg) {
@@ -1410,8 +1575,8 @@
                 const mapWin = document.getElementById('iframe-map')?.contentWindow;
                 const panoWin = document.getElementById('iframe-panorama')?.contentWindow;
 
-                if (this.state.framesReady.map && mapWin) mapWin.postMessage(message, '*');
-                if (this.state.framesReady.panorama && panoWin) panoWin.postMessage(message, '*');
+                if (this.state.framesReady.map && mapWin) mapWin.postMessage(message, window.location.origin);
+                if (this.state.framesReady.panorama && panoWin) panoWin.postMessage(message, window.location.origin);
             },
 
             // --- 替换 index.html 中的 calcColor ---
@@ -1548,26 +1713,19 @@
             switchView: function (view) {
                 if (view === this.state.currentView) return;
 
-                // [Sync] 1. 切换前：尝试捕获当前视图的中心年份
-                let syncYear = null;
-                const oldView = this.state.currentView;
-                try {
-                    const oldFrame = document.getElementById(oldView === 'map' ? 'iframe-map' : 'iframe-panorama');
-                    // 约定：子页面必须挂载 getCenterYear 方法到 window 上
-                    if (oldFrame && oldFrame.contentWindow && typeof oldFrame.contentWindow.getCenterYear === 'function') {
-                        syncYear = oldFrame.contentWindow.getCenterYear();
-                    }
-                } catch (e) { console.warn(`[Sync] Failed to get start year from ${oldView}`, e); }
+                // 使用 setState 触发视图切换（单向数据流）
+                this.setState({ currentView: view });
+            },
 
-                this.state.currentView = view;
-
+            // === UI订阅器：监听 currentView 变化并更新DOM ===
+            _updateViewUI: function (newView) {
                 const mapFrame = document.getElementById('iframe-map');
                 const panoFrame = document.getElementById('iframe-panorama');
                 const btnMap = document.getElementById('tab-map');
                 const btnPano = document.getElementById('tab-pano');
                 const quickNav = document.getElementById('quick-nav');
 
-                if (view === 'map') {
+                if (newView === 'map') {
                     mapFrame.classList.add('view-active'); mapFrame.classList.remove('view-hidden');
                     panoFrame.classList.add('view-hidden'); panoFrame.classList.remove('view-active');
                     btnMap.classList.add('active'); btnPano.classList.remove('active');
@@ -1578,22 +1736,26 @@
                     btnPano.classList.add('active'); btnMap.classList.remove('active');
                     quickNav.style.display = 'block';
                 }
-
-                // [Sync] 2. 切换后：将年份指令发给新视图
-                if (syncYear !== null) {
-                    setTimeout(() => {
-                        this.broadcast('CMD_SCROLL_TO_YEAR', syncYear);
-                    }, 50);
-                }
             },
 
             handleMessage: function (event) {
                 const { type, payload } = event.data;
                 if (!type) return;
 
+                // === 单向数据流：子页面请求状态变更 ===
+                if (type === 'STATE_UPDATE_REQUEST') {
+                    // 子页面不能直接修改state，只能请求父页面修改
+                    this.setState(payload);
+                    return;
+                }
+
                 if (type === 'CHILD_READY') {
                     this.log(`Child Ready: ${payload.source}`);
                     this.state.framesReady[payload.source] = true;
+
+                    // iframe准备好后，立即同步当前状态
+                    this.broadcastStateSync();
+
                     if (this.state.dataReady) this.broadcastData();
                 } else if (type === 'REQUEST_SWITCH') {
                     this.switchView(payload.target);
@@ -1607,7 +1769,7 @@
                 this.log(`Broadcast: ${type}`);
                 const frame = this.state.currentView === 'map' ? document.getElementById('iframe-map') : document.getElementById('iframe-panorama');
                 if (frame && frame.contentWindow) {
-                    frame.contentWindow.postMessage({ type, payload }, '*');
+                    frame.contentWindow.postMessage({ type, payload }, window.location.origin);
                 }
             },
 
@@ -1689,7 +1851,7 @@
                 setTimeout(() => {
                     const pano = document.getElementById('iframe-panorama');
                     if (pano && pano.contentWindow) {
-                        pano.contentWindow.postMessage({ type: 'CMD_TOGGLE_FEATURE', payload: 'connections' }, '*');
+                        pano.contentWindow.postMessage({ type: 'CMD_TOGGLE_FEATURE', payload: 'connections' }, window.location.origin);
                     }
                 }, 200);
             },
@@ -1710,14 +1872,36 @@
             },
 
             clearCache: function () {
-                if (confirm("⚠️ 确定要清除所有本地缓存吗？\n\n这将删除：\n1. 本地存储的历史数据\n2. 保存的 Gemini API Key\n\n页面将自动刷新。")) {
+                if (confirm("⚠️ 确定要清除所有本地缓存吗？\n\n这将删除：\n1. 本地存储的历史数据\n2. 保存的 Gemini API Key\n3. 布局优化缓存 (IndexedDB)\n4. 版本号缓存\n\n页面将自动刷新。")) {
                     try {
+                        // 1. 清理 localStorage
                         localStorage.removeItem(this.config.cacheKey);
                         localStorage.removeItem(this.config.apiKeyStorage);
-                        alert("缓存已成功清除。");
-                        location.reload();
+                        localStorage.removeItem('APP_VERSION');
+
+                        // 2. 清理 IndexedDB (布局数据)
+                        const dbNames = ['EastAsiaHistoryDB', 'EastAsiaLayoutDB'];
+                        dbNames.forEach(name => {
+                            try {
+                                indexedDB.deleteDatabase(name);
+                                console.log(`🗑️ Deleted IndexedDB: ${name}`);
+                            } catch (e) {
+                                console.warn(`Failed to delete ${name}:`, e);
+                            }
+                        });
+
+                        // 3. 清理 Service Worker 缓存 (如有)
+                        if ('caches' in window) {
+                            caches.keys().then(names => {
+                                names.forEach(name => caches.delete(name));
+                            });
+                        }
+
+                        alert("✅ 所有缓存已成功清除。");
+                        location.reload(true); // 强制刷新，绕过浏览器缓存
                     } catch (e) {
                         console.error("Clear cache failed:", e);
+                        alert("清除缓存时出错：" + e.message);
                     }
                 }
             },
@@ -1736,7 +1920,7 @@
                 const frames = document.querySelectorAll('iframe');
                 frames.forEach(frame => {
                     if (frame.contentWindow) {
-                        frame.contentWindow.postMessage({ type: 'CMD_RESET' }, '*');
+                        frame.contentWindow.postMessage({ type: 'CMD_RESET' }, window.location.origin);
                     }
                 });
 

@@ -4,12 +4,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Layout Optimizer - v10.00</title>
+    <title>Layout Optimizer - v11.00</title>
+
+    <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
+    <script>
+        window.APP_VERSION = '2026.01.04.001';
+        window.APP_CONFIG = {
+            VERSION: '11.0.0',
+            BUILD_DATE: '2026-01-04',
+            // CDN Fallback URLs
+            CDN_REACT: 'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
+            CDN_REACT_DOM: 'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js',
+            CDN_BABEL: 'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js'
+        };
+
+        // 缓存版本检查
+        (function () {
+            const storedVersion = localStorage.getItem('APP_VERSION');
+            if (storedVersion && storedVersion !== window.APP_VERSION) {
+                console.log('🔄 检测到版本更新，清理缓存...');
+                // 清理 IndexedDB 缓存（可选，保留布局数据）
+                // indexedDB.deleteDatabase('EastAsiaHistoryDB');
+            }
+            localStorage.setItem('APP_VERSION', window.APP_VERSION);
+        })();
+
+        // 为 URL 添加版本查询字符串（用于缓存失效）
+        window.APP_CONFIG.withVersion = function (url) {
+            if (!url) return url;
+            const separator = url.includes('?') ? '&' : '?';
+            return url + separator + 'v=' + window.APP_VERSION;
+        };
+    </script>
+
+    <!-- React with SRI (Subresource Integrity) -->
+    <!-- React with SRI (Removed temporarily) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+
+    <!-- ✅ Babel 已移除 - JSX 已预编译为 React.createElement -->
+
+    <!-- Tailwind CSS - 内联关键样式 + CDN fallback -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-    <script crossorigin
-        src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 
     <style type="text/tailwindcss">
         body {
@@ -26,55 +62,150 @@
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
         }
 
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; border: 1px solid #0f172a; }
-        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+            border: 1px solid #0f172a;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
 
         .matrix-viewport {
-            position: relative; width: 100%; height: 100%; overflow: auto; background: #020617; isolation: isolate; 
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background: #020617;
+            isolation: isolate;
         }
 
         .header-row {
-            position: sticky; top: 0; z-index: 50; display: flex; height: 36px; background: #1e293b; border-bottom: 1px solid #475569;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            display: flex;
+            height: 36px;
+            background: #1e293b;
+            border-bottom: 1px solid #475569;
         }
 
         .header-cell {
-            flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #cbd5e1; border-right: 1px solid #334155; cursor: grab; background: #1e293b; padding: 0 4px; text-align: center; line-height: 1.2; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 600;
+            color: #cbd5e1;
+            border-right: 1px solid #334155;
+            cursor: grab;
+            background: #1e293b;
+            padding: 0 4px;
+            text-align: center;
+            line-height: 1.2;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
         }
 
         .year-col-container {
-            position: sticky; left: 0; z-index: 40; width: 60px; background: #0f172a; border-right: 1px solid #334155;
+            position: sticky;
+            left: 0;
+            z-index: 40;
+            width: 60px;
+            background: #0f172a;
+            border-right: 1px solid #334155;
         }
 
         .data-row {
-            position: absolute; display: flex; width: 100%; border-bottom: 1px solid #1e293b;
+            position: absolute;
+            display: flex;
+            width: 100%;
+            border-bottom: 1px solid #1e293b;
         }
 
         .data-cell {
-            flex-shrink: 0; display: flex; flex-direction: row; padding: 1px; gap: 1px; border-right: 1px solid rgba(255,255,255,0.05); overflow: hidden;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: row;
+            padding: 1px;
+            gap: 1px;
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+            overflow: hidden;
         }
 
         .regime-block {
-            flex: 1; height: 100%; border-radius: 1px; font-size: 10px; font-weight: 500; display: flex; align-items: center; justify-content: center; white-space: nowrap; overflow: hidden; text-shadow: 0 1px 2px rgba(0,0,0,0.9); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); cursor: help; color: #fff; transition: transform 0.1s;
+            flex: 1;
+            height: 100%;
+            border-radius: 1px;
+            font-size: 10px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+            cursor: help;
+            color: #fff;
+            transition: transform 0.1s;
         }
-        .regime-block:hover { transform: scale(1.1); z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.6); }
 
-        .btn { @apply px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm; }
-        .btn-primary { @apply bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/20; }
-        .btn-accent { @apply bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/20; }
-        .btn-success { @apply bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20; }
-        .btn-purple { @apply bg-purple-600 hover:bg-purple-500 text-white shadow-purple-900/20; }
-        .btn-danger { @apply bg-rose-600 hover:bg-rose-500 text-white shadow-rose-900/20; }
-        .btn-dark { @apply bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600; }
+        .regime-block:hover {
+            transform: scale(1.1);
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+        }
+
+        .btn {
+            @apply px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm;
+        }
+
+        .btn-primary {
+            @apply bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/20;
+        }
+
+        .btn-accent {
+            @apply bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/20;
+        }
+
+        .btn-success {
+            @apply bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20;
+        }
+
+        .btn-purple {
+            @apply bg-purple-600 hover:bg-purple-500 text-white shadow-purple-900/20;
+        }
+
+        .btn-danger {
+            @apply bg-rose-600 hover:bg-rose-500 text-white shadow-rose-900/20;
+        }
+
+        .btn-dark {
+            @apply bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600;
+        }
     </style>
 </head>
 
 <body>
     <div id="root" class="h-screen w-screen flex flex-col"></div>
 
-    <script type="text/babel">
+    <script>
         const { useState, useEffect, useMemo, useRef, useCallback } = React;
+        const h = React.createElement; // Alias for manual React
+        const Fragment = React.Fragment;
 
         const CONFIG = {
             MIN_YEAR: -2070,
@@ -2388,227 +2519,156 @@
 
             const runFlip = () => { handleFlip(); }; // Wrap handleFlip
 
-            return (
-                <div className="h-full flex flex-col bg-slate-900 text-slate-200">
-                    <div className="glass-panel z-50 px-4 py-3 flex items-center justify-between shadow-xl relative backdrop-blur-md bg-opacity-90 border-b border-slate-700/50">
-                        {/* Left: Branding & Inputs */}
-                        <div className="flex items-center gap-4">
-                            <div className="flex flex-col leading-tight">
-                                <span className="font-bold text-lg text-slate-100 tracking-tight">Layout Optimizer</span>
-                                <span className="text-[10px] text-purple-400 font-mono">v10.0 ULTRA</span>
-                            </div>
-                            <div className="h-8 w-px bg-slate-700/50 mx-2"></div>
+            // 纯 JS 渲染
+            return h('div', { className: "h-full flex flex-col bg-slate-900 text-slate-200" },
+                // 1. Top Panel
+                h('div', { className: "glass-panel z-50 px-4 py-3 flex items-center justify-between shadow-xl relative backdrop-blur-md bg-opacity-90 border-b border-slate-700/50" },
+                    // Left
+                    h('div', { className: "flex items-center gap-4" },
+                        h('div', { className: "flex flex-col leading-tight" },
+                            h('span', { className: "font-bold text-lg text-slate-100 tracking-tight" }, "Layout Optimizer"),
+                            h('span', { className: "text-[10px] text-purple-400 font-mono" }, "v11.0 ULTRA (No-Babel)")
+                        ),
+                        h('div', { className: "h-8 w-px bg-slate-700/50 mx-2" }),
+                        h('div', { className: "flex gap-2" },
+                            h('label', { className: "btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/50 cursor-pointer" },
+                                h('span', { className: "opacity-80" }, "📁 导入"),
+                                h('input', { type: "file", accept: ".csv,.json", onChange: handleFile, className: "hidden", ref: fileInputRef })
+                            ),
+                            h('button', { onClick: () => loadRemoteCSV(), className: "btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/50", title: "Google Sheet / Local" }, "☁️ 云端数据")
+                        )
+                    ),
+                    // Center
+                    h('div', { className: "absolute left-1/2 -translate-x-1/2 flex gap-2" },
+                        (status !== 'ranking' && status !== 'layout') ? h(Fragment, null,
+                            h('button', { onClick: runColumnOptimizer, className: "btn bg-slate-700 hover:bg-slate-600 text-slate-200 shadow-lg border border-slate-600/50", disabled: !data }, "1. 列序"),
+                            h('button', { onClick: runCellOptimizer, className: "btn bg-slate-700 hover:bg-slate-600 text-slate-200 shadow-lg border border-slate-600/50", disabled: !data }, "2. 布局"),
+                            h('div', { className: "w-px h-8 bg-slate-700/50 mx-1" }),
+                            h('button', { onClick: runDeepJointOptimization, className: "btn bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-900/40 border-0 font-bold px-6", disabled: !data, title: "一键运行 TSP 列排序 + Master Seq 布局优化" }, "🚀 深度联合优化")
+                        ) : h('div', { className: "flex gap-2 items-center bg-slate-800 rounded px-3 border border-slate-700" },
+                            h('span', { className: "text-xs font-mono text-blue-300" }, status === 'ranking' ? 'TSP SOLVING...' : 'ALIGNING...'),
+                            h('button', { onClick: handleStop, className: "ml-2 text-xs text-red-400 hover:text-red-300" }, "STOP")
+                        )
+                    ),
+                    // Right
+                    h('div', { className: "flex items-center gap-4" },
+                        h('div', { className: "flex flex-col items-end mr-2 font-mono text-[10px] text-slate-400 cursor-help", title: "Score Info" },
+                            h('div', null, "TSP: ", h('span', { className: "text-emerald-400" }, Math.round(tspBestScore).toLocaleString())),
+                            h('div', null, "LAY: ", h('span', { className: "text-blue-400" }, layoutScore !== 0 ? Math.round(layoutScore).toLocaleString() : '--'))
+                        ),
+                        h('div', { className: "h-8 w-px bg-slate-700/50" }),
+                        h('div', { className: "flex gap-2" },
+                            h('button', {
+                                onClick: interactionMode === 'idle' ? startManualAdjustment : resetManualMode,
+                                className: `btn ${interactionMode !== 'idle' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'} text-white border-0`,
+                                disabled: !data,
+                                title: "手动微调"
+                            }, interactionMode !== 'idle' ? '❌ 取消' : '🛠️ 修改序列'),
+                            h('button', { onClick: saveToDB, className: "btn bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/20 border-0", disabled: !data, title: "保存到 DB" }, "💾 写入 DB"),
+                            h('button', { onClick: exportJSON, className: "btn bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600", disabled: !data, title: "导出 JSON" }, "📤 导出"),
+                            h('a', { href: "index.html", className: "btn bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600/50", title: "返回首页" }, "🏠")
+                        )
+                    )
+                ),
 
-                            <div className="flex gap-2">
-                                <label className="btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/50 cursor-pointer">
-                                    <span className="opacity-80">📁 导入</span>
-                                    <input type="file" accept=".csv,.json" onChange={handleFile} className="hidden" ref={fileInputRef} />
-                                </label>
-                                <button onClick={() => loadRemoteCSV()} className="btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/50" title="Google Sheet / Local">
-                                    ☁️ 云端数据
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Center: Controls */}
-                        <div className="absolute left-1/2 -translate-x-1/2 flex gap-2">
-                            {status !== 'ranking' && status !== 'layout' ? (
-                                <>
-                                    <button onClick={runColumnOptimizer} className="btn bg-slate-700 hover:bg-slate-600 text-slate-200 shadow-lg border border-slate-600/50" disabled={!data}>
-                                        1. 列序
-                                    </button>
-                                    <button onClick={runCellOptimizer} className="btn bg-slate-700 hover:bg-slate-600 text-slate-200 shadow-lg border border-slate-600/50" disabled={!data}>
-                                        2. 布局
-                                    </button>
-                                    <div className="w-px h-8 bg-slate-700/50 mx-1"></div>
-                                    <button onClick={runDeepJointOptimization} className="btn bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-900/40 border-0 font-bold px-6" disabled={!data} title="一键运行 TSP 列排序 + Master Seq 布局优化">
-                                        🚀 深度联合优化
-                                    </button>
-                                </>
-                            ) : (
-                                <div className="flex gap-2 items-center bg-slate-800 rounded px-3 border border-slate-700">
-                                    <svg className="w-4 h-4 animate-spin text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                                    <span className="text-xs font-mono text-blue-300">{status === 'ranking' ? 'TSP SOLVING...' : 'ALIGNING...'}</span>
-                                    <button onClick={handleStop} className="ml-2 text-xs text-red-400 hover:text-red-300">STOP</button>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Right: Actions & Score */}
-                        <div className="flex items-center gap-4">
-                            {/* Score Board */}
-                            <div className="flex flex-col items-end mr-2 font-mono text-[10px] text-slate-400 cursor-help" title="TSP: 邻接亲和力总分 (越高不仅代表相邻紧密，也代表历史连续性好)&#010;LAY: 全局对齐一致性分数 (越高代表政权继承关系越顺畅)">
-                                <div>TSP: <span className="text-emerald-400">{Math.round(tspBestScore).toLocaleString()}</span></div>
-                                <div>LAY: <span className="text-blue-400">{layoutScore !== 0 ? Math.round(layoutScore).toLocaleString() : '--'}</span></div>
-                            </div>
-                            <div className="h-8 w-px bg-slate-700/50"></div>
-
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={interactionMode === 'idle' ? startManualAdjustment : resetManualMode}
-                                    className={`btn ${interactionMode !== 'idle' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'} text-white border-0`}
-                                    disabled={!data}
-                                    title="手动微调列内政权序列"
-                                >
-                                    {interactionMode !== 'idle' ? '❌ 取消' : '🛠️ 修改序列'}
-                                </button>
-                                <button onClick={saveToDB} className="btn bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/20 border-0" disabled={!data} title="保存到 IndexedDB 供全景图读取">
-                                    💾 写入 DB
-                                </button>
-                                <button onClick={exportJSON} className="btn bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600" disabled={!data} title="导出 JSON 模具">
-                                    📤 导出
-                                </button>
-                                <a href="index.html" className="btn bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600/50" title="返回首页">
-                                    🏠
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Interaction Status Bar */}
-                    {interactionMode !== 'idle' && (
-                        <div className="h-10 bg-amber-900 border-b border-amber-600 flex items-center justify-between px-4 text-xs font-medium text-amber-100 animate-fade-in z-20 shadow-md">
-                            <div className="flex items-center gap-2">
-                                <span className="mr-2 text-amber-400 font-bold">🔧 序列编辑:</span>
-                                {interactionMode === 'select-region' && "请点击选择要修改的地区（列标题）"}
-                                {interactionMode === 'select-regime-a' && <span>已选地区 <span className="text-white px-1 bg-amber-800 rounded">{data.names[targetRegion]}</span>。请点击要移动的政权 (A)</span>}
-                                {interactionMode === 'select-regime-b' && <span>已选 <span className="text-white px-1 bg-amber-800 rounded">{moveRegimeA.split('|')[0]}</span>。请点击目标锚点政权 (B)</span>}
-                                {interactionMode === 'confirm-move' && scoreComparison && (
-                                    <span className="flex items-center gap-2">
-                                        <span>将 <strong className="text-white">{moveRegimeA.split('|')[0]}</strong> 移至 <strong className="text-white">{moveRegimeB.split('|')[0]}</strong> 之前。</span>
-                                        <span className="text-slate-400">|</span>
-                                        <span>分数变化: {scoreComparison.old.toLocaleString()} <span className="text-slate-400">→</span> <span className={`${scoreComparison.new > scoreComparison.old ? 'text-emerald-400' : (scoreComparison.new < scoreComparison.old ? 'text-rose-400' : 'text-white')} font-bold`}>{scoreComparison.new.toLocaleString()}</span></span>
-                                    </span>
-                                )}
-                            </div>
-
-                            {interactionMode === 'confirm-move' && (
-                                <div className="flex gap-2">
-                                    <button onClick={cancelMove} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-xs border border-slate-500">
-                                        ❌ 取消
-                                    </button>
-                                    <button onClick={confirmMove} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold shadow-lg border border-emerald-400">
-                                        ✅ 确认修改
-                                    </button>
-                                </div>
-                            )}
-
-                            {interactionMode !== 'confirm-move' && (
-                                <button onClick={resetManualMode} className="text-amber-400/60 hover:text-amber-200 text-xs">退出</button>
-                            )}
-                        </div>
-                    )}
-
-                    <div className="flex-1 overflow-hidden relative flex flex-col pt-[1px]">
-                        {data ? (
-                            <div
-                                className="matrix-viewport"
-                                onScroll={(e) => setScrollTop(e.target.scrollTop)}
-                                ref={(el) => { if (el) { gridRef.current = el; if (el.clientHeight !== viewportH) setViewportH(el.clientHeight); } }}
-                            >
-                                <div style={{ height: totalH, width: 60 + colOrder.length * CONFIG.COL_WIDTH, position: 'relative' }}>
-                                    <div className="header-row" style={{ width: '100%', minWidth: 'max-content' }}>
-                                        {/* Flip Button (Icon) */}
-                                        <div
-                                            className="header-cell sticky left-0 z-[60] w-[60px] bg-slate-800 border-r border-slate-600 text-slate-400 cursor-pointer hover:bg-slate-700 hover:text-emerald-400 transition-colors flex justify-center items-center"
-                                            onClick={handleFlip}
-                                        >
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                                            </svg>
-                                        </div>
-                                        {colOrder.map((id, index) => {
-                                            const isSelected = targetRegion === id;
-                                            const isModeSelectRegion = interactionMode === 'select-region';
-                                            return (
-                                                <div
-                                                    key={id}
-                                                    className={`header-cell ${draggedCol === index ? 'opacity-50 dashed-border' : ''} ${isSelected ? 'bg-amber-800/80 text-amber-100 ring-2 ring-amber-500 z-50' : ''} ${isModeSelectRegion ? 'cursor-pointer hover:bg-amber-900/50 ring-1 ring-amber-500/30' : 'cursor-move hover:bg-slate-700'} transition-all select-none`}
-                                                    style={{ width: CONFIG.COL_WIDTH }}
-                                                    title={data.names[id] || id}
-                                                    draggable={interactionMode === 'idle'} // Only allow drag when idle
-                                                    onDragStart={(e) => handleDragStart(e, index)}
-                                                    onDragOver={(e) => handleDragOver(e, index)}
-                                                    onDrop={(e) => handleDrop(e, index)}
-                                                    onClick={() => handleHeaderClick(index)}
-                                                >
-                                                    {data.names[id] || id}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                    {visibleYears.map(year => (
-                                        <div key={year} className="data-row" style={{ top: (year - CONFIG.MIN_YEAR) * CONFIG.ROW_HEIGHT + 36, height: CONFIG.ROW_HEIGHT }}>
-                                            <div className="year-col-container flex items-center justify-center h-full">
-                                                <div className="font-mono text-[10px] text-slate-500">{year}</div>
-                                            </div>
-                                            {colOrder.map(id => {
-                                                const regimes = cellLayout[id]?.[year] || [];
-                                                return (
-                                                    <div key={id} className="data-cell" style={{ width: CONFIG.COL_WIDTH }}>
-                                                        {regimes.map(r => {
-                                                            const isSelectedA = moveRegimeA === r;
-                                                            const isSelectedB = moveRegimeB === r;
-                                                            const isInteractive = (interactionMode === 'select-regime-a' && targetRegion === id) || (interactionMode === 'select-regime-b' && targetRegion === id);
-
-                                                            return (
-                                                                <div key={r}
-                                                                    className={`regime-block ${isSelectedA ? 'ring-2 ring-amber-400 z-10 scale-105' : ''} ${isSelectedB ? 'ring-2 ring-blue-400 z-10' : ''} ${isInteractive ? 'cursor-pointer hover:opacity-80' : ''}`}
-                                                                    style={{ backgroundColor: calcColor(r.split('|')[1] || data.codes[r.split('|')[0]] || r) }}
-                                                                    title={r}
-
-                                                                    // Click for new mode
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleRegimeClick(r, id);
-                                                                    }}
-                                                                >
-                                                                    {r.split('|')[0]}
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 bg-slate-950">
-                                <p className="text-sm font-medium">请导入 CSV 数据文件 / JSON 模具</p>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="h-32 bg-slate-950 border-t border-slate-800 flex flex-col font-mono text-[10px] shadow-inner-lg z-50">
-                        <div className="px-4 py-1 bg-slate-900 border-b border-slate-800 text-slate-500 flex justify-between items-center">
-                            <div className="flex items-center gap-3">
-                                <span>CONSOLE LOG</span>
-                                <button
-                                    onClick={() => navigator.clipboard.writeText(logs.join('\n'))}
-                                    className="text-[9px] px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-slate-400 hover:text-white transition-colors cursor-pointer"
-                                    title="Copy full logs to clipboard"
-                                >
-                                    COPY
-                                </button>
-                            </div>
-                            <span className={status === 'ranking' || status === 'layout' ? 'text-blue-400 animate-pulse' : 'text-emerald-500'}>
-                                {status === 'idle' ? 'IDLE' : status.toUpperCase()}
-                            </span>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-2 space-y-1 text-slate-400">
-                            {logs.map((l, i) => (
-                                <div key={i} ref={i === logs.length - 1 ? logEndRef : null}>{l}</div>
-                            ))}
-                        </div>
-                    </div>
-                </div >
+                // 2. Interaction Bar
+                interactionMode !== 'idle' && h('div', { className: "h-10 bg-amber-900 border-b border-amber-600 flex items-center justify-between px-4 text-xs font-medium text-amber-100 animate-fade-in z-20 shadow-md" },
+                    h('div', { className: "flex items-center gap-2" },
+                        h('span', { className: "mr-2 text-amber-400 font-bold" }, "🔧 序列编辑:"),
+                        interactionMode === 'select-region' && "请点击选择要修改的地区（列标题）",
+                        interactionMode === 'select-regime-a' && h('span', null, "已选地区 ", h('span', { className: "text-white px-1 bg-amber-800 rounded" }, data.names[targetRegion]), "。请点击要移动的政权 (A)"),
+                        interactionMode === 'select-regime-b' && h('span', null, "已选 ", h('span', { className: "text-white px-1 bg-amber-800 rounded" }, moveRegimeA.split('|')[0]), "。请点击目标锚点政权 (B)"),
+                        interactionMode === 'confirm-move' && scoreComparison && h('span', { className: "flex items-center gap-2" },
+                            h('span', null, "将 ", h('strong', { className: "text-white" }, moveRegimeA.split('|')[0]), " 移至 ", h('strong', { className: "text-white" }, moveRegimeB.split('|')[0]), " 之前。"),
+                            h('span', { className: "text-slate-400" }, "|"),
+                            h('span', null, "分数变化: ", scoreComparison.old.toLocaleString(), " → ", h('span', { className: `${scoreComparison.new > scoreComparison.old ? 'text-emerald-400' : (scoreComparison.new < scoreComparison.old ? 'text-rose-400' : 'text-white')} font-bold` }, scoreComparison.new.toLocaleString()))
+                        )
+                    ),
+                    interactionMode === 'confirm-move' ? h('div', { className: "flex gap-2" },
+                        h('button', { onClick: cancelMove, className: "px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-xs border border-slate-500" }, "❌ 取消"),
+                        h('button', { onClick: confirmMove, className: "px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold shadow-lg border border-emerald-400" }, "✅ 确认修改")
+                    ) : h('button', { onClick: resetManualMode, className: "text-amber-400/60 hover:text-amber-200 text-xs" }, "退出")
+                ),
+                // 3. Matrix Viewport
+                h('div', { className: "flex-1 overflow-hidden relative flex flex-col pt-[1px]" },
+                    data ? h('div', {
+                        className: "matrix-viewport",
+                        onScroll: (e) => setScrollTop(e.target.scrollTop),
+                        ref: (el) => { if (el) { gridRef.current = el; if (el.clientHeight !== viewportH) setViewportH(el.clientHeight); } }
+                    },
+                        h('div', { style: { height: totalH, width: 60 + colOrder.length * CONFIG.COL_WIDTH, position: 'relative' } },
+                            // Header Row
+                            h('div', { className: "header-row", style: { width: '100%', minWidth: 'max-content' } },
+                                h('div', {
+                                    className: "header-cell sticky left-0 z-[60] w-[60px] bg-slate-800 border-r border-slate-600 text-slate-400 cursor-pointer hover:bg-slate-700 hover:text-emerald-400 transition-colors flex justify-center items-center",
+                                    onClick: handleFlip
+                                }, "⇄"),
+                                colOrder.map((id, index) => {
+                                    const isSelected = targetRegion === id;
+                                    const isModeSelectRegion = interactionMode === 'select-region';
+                                    return h('div', {
+                                        key: id,
+                                        className: `header-cell ${draggedCol === index ? 'opacity-50 dashed-border' : ''} ${isSelected ? 'bg-amber-800/80 text-amber-100 ring-2 ring-amber-500 z-50' : ''} ${isModeSelectRegion ? 'cursor-pointer hover:bg-amber-900/50 ring-1 ring-amber-500/30' : 'cursor-move hover:bg-slate-700'} transition-all select-none`,
+                                        style: { width: CONFIG.COL_WIDTH },
+                                        title: data.names[id] || id,
+                                        draggable: interactionMode === 'idle',
+                                        onDragStart: (e) => handleDragStart(e, index),
+                                        onDragOver: (e) => handleDragOver(e, index),
+                                        onDrop: (e) => handleDrop(e, index),
+                                        onClick: () => handleHeaderClick(index)
+                                    }, data.names[id] || id);
+                                })
+                            ),
+                            // Data Rows (Virtualized)
+                            visibleYears.map(year => h('div', { key: year, className: "data-row", style: { top: (year - CONFIG.MIN_YEAR) * CONFIG.ROW_HEIGHT + 36, height: CONFIG.ROW_HEIGHT } },
+                                h('div', { className: "year-col-container flex items-center justify-center h-full" },
+                                    h('div', { className: "font-mono text-[10px] text-slate-500" }, year)
+                                ),
+                                colOrder.map(id => {
+                                    const regimes = cellLayout[id]?.[year] || [];
+                                    return h('div', { key: id, className: "data-cell", style: { width: CONFIG.COL_WIDTH } },
+                                        regimes.map(r => {
+                                            const isSelectedA = moveRegimeA === r;
+                                            const isSelectedB = moveRegimeB === r;
+                                            const isInteractive = (interactionMode === 'select-regime-a' && targetRegion === id) || (interactionMode === 'select-regime-b' && targetRegion === id);
+                                            return h('div', {
+                                                key: r,
+                                                className: `regime-block ${isSelectedA ? 'ring-2 ring-amber-400 z-10 scale-105' : ''} ${isSelectedB ? 'ring-2 ring-blue-400 z-10' : ''} ${isInteractive ? 'cursor-pointer hover:opacity-80' : ''}`,
+                                                style: { backgroundColor: calcColor(r.split('|')[1] || data.codes[r.split('|')[0]] || r) },
+                                                title: r,
+                                                onClick: (e) => { e.stopPropagation(); handleRegimeClick(r, id); }
+                                            }, r.split('|')[0]);
+                                        })
+                                    );
+                                })
+                            ))
+                        )
+                    ) : h('div', { className: "flex-1 flex flex-col items-center justify-center text-slate-600 bg-slate-950" },
+                        h('p', { className: "text-sm font-medium" }, "请导入 CSV 数据文件 / JSON 模具")
+                    )
+                ),
+                // 4. Log Panel
+                h('div', { className: "h-32 bg-slate-950 border-t border-slate-800 flex flex-col font-mono text-[10px] shadow-inner-lg z-50" },
+                    h('div', { className: "px-4 py-1 bg-slate-900 border-b border-slate-800 text-slate-500 flex justify-between items-center" },
+                        h('div', { className: "flex items-center gap-3" },
+                            h('span', null, "CONSOLE LOG"),
+                            h('button', {
+                                onClick: () => navigator.clipboard.writeText(logs.join('\n')),
+                                className: "text-[9px] px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-slate-400 hover:text-white transition-colors cursor-pointer",
+                                title: "Copy full logs"
+                            }, "COPY")
+                        ),
+                        h('span', { className: status === 'ranking' || status === 'layout' ? 'text-blue-400 animate-pulse' : 'text-emerald-500' }, status === 'idle' ? 'IDLE' : status.toUpperCase())
+                    ),
+                    h('div', { className: "flex-1 overflow-y-auto p-2 space-y-1 text-slate-400" },
+                        logs.map((l, i) => h('div', { key: i, ref: i === logs.length - 1 ? logEndRef : null }, l))
+                    )
+                )
             );
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(h(App));
     </script>
 </body>
 

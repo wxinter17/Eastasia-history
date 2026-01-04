@@ -4,7 +4,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v10.00)</title>
+    <title>东亚历史全景 (v11.00)</title>
+
+    <!-- 🔑 全局版本控制 -->
+    <script>
+        window.APP_VERSION = '2026.01.04.001';
+    </script>
+
     <!-- [Unified CSS] Native Style (Merged) -->
     <link
         href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700;900&family=Inter:wght@400;600&display=swap"
@@ -1348,15 +1354,83 @@
                         }
                         if (window.scrollToYear) window.scrollToYear(payload);
                     }
+
+                    // === 9. 全局状态同步（单向数据流：父→子） ===
+                    if (type === 'STATE_SYNC') {
+                        // 接收父页面的全局状态，更新本地视图
+                        const appState = payload;
+
+                        // 1. 同步年份（使用全景的滚动方法）
+                        if (appState.year !== undefined && window.scrollToYear) {
+                            window.scrollToYear(appState.year);
+                        }
+
+                        // 2. 同步选中的政权（如果有高亮方法）
+                        if (appState.selectedRegime !== undefined) {
+                            if (appState.selectedRegime) {
+                                // 全景视图的政权高亮逻辑（如果有）
+                                console.log('[Panorama] Selected regime:', appState.selectedRegime);
+                            } else {
+                                // 清除选中
+                                console.log('[Panorama] Clear regime selection');
+                            }
+                        }
+
+                        // 3. 同步锁定状态
+                        if (appState.locked !== undefined) {
+                            console.log('[Panorama] Regime locked:', appState.locked);
+                        }
+
+                        // 调试日志
+                        console.log('[Panorama] STATE_SYNC received:', {
+                            year: appState.year,
+                            selectedRegime: appState.selectedRegime,
+                            locked: appState.locked
+                        });
+                    }
                 });
 
                 // Notify parent
                 if (window.parent !== window) {
-                    window.parent.postMessage({ type: 'CHILD_READY', payload: { source: 'panorama' } }, '*');
+                    window.parent.postMessage({ type: 'CHILD_READY', payload: { source: 'panorama' } }, window.location.origin);
                 }
 
                 // Bind UI Events
                 this.bindEvents();
+                this._setupScrollSync(); // 设置滚动-状态同步
+            },
+
+            // === [单向数据流] 添加滚动监听，同步年份到全局状态 ===
+            _setupScrollSync: function () {
+                const mainContent = document.getElementById('main-content');
+                if (!mainContent) return;
+
+                let scrollTimer = null;
+                let isProgrammaticScroll = false;
+
+                mainContent.addEventListener('scroll', () => {
+                    if (isProgrammaticScroll) return;
+
+                    // 节流：滚动停止300ms后才更新状态（避免高频postMessage）
+                    clearTimeout(scrollTimer);
+                    scrollTimer = setTimeout(() => {
+                        const centerYear = window.getCenterYear ? window.getCenterYear() : null;
+                        if (centerYear !== null && window.parent && window.parent !== window) {
+                            window.parent.postMessage({
+                                type: 'STATE_UPDATE_REQUEST',
+                                payload: { year: Math.round(centerYear) }
+                            }, window.location.origin);
+                        }
+                    }, 300);
+                }, { passive: true });
+
+                // 当接收到 STATE_SYNC 时，标记为程序化滚动
+                const originalScrollToYear = window.scrollToYear;
+                window.scrollToYear = function (year) {
+                    isProgrammaticScroll = true;
+                    originalScrollToYear(year);
+                    setTimeout(() => { isProgrammaticScroll = false; }, 500);
+                };
             },
 
             // --- [修复] 全景页专用复位函数 (安全版) ---
@@ -2606,7 +2680,7 @@
 
                         // 绑定新事件
                         newBtn.onclick = () => {
-                            window.parent.postMessage({ type: "REQUEST_SWITCH", payload: jumpPayload }, "*");
+                            window.parent.postMessage({ type: "REQUEST_SWITCH", payload: jumpPayload }, window.location.origin);
                         };
                     }
 
