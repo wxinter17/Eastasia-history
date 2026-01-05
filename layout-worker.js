@@ -330,21 +330,24 @@ class AdvancedColumnSorter {
 class GlobalSequenceOptimizer {
     constructor(colOrder, grid, onLog) {
         this.cols = colOrder;
-        this.rawGrid = grid; // Keep raw grid for reference
+        this.rawGrid = grid;
         this.onLog = onLog;
-        this.masterSeqs = {}; // NOW MAPS COL_ID -> ARRAY<INT_ID>
-        this.activeSets = {}; // NOW MAPS COL_ID -> YEAR -> SET<INT_ID>
+        this.masterSeqs = {};
+        this.activeSets = {};
 
         // [Optimization 3] Integer Mappings
         this.strToInt = new Map();
         this.intToStr = [];
-        this.fuzzyRoots = null; // Int32Array: ID -> ParentID (for fuzzy matching)
+        this.fuzzyRoots = null;
 
         // Cache
         this.pairScores = {};
         this.stabilityScores = {};
         this.cutoffYears = [];
         this.activeSetsByYear = {};
+
+        // [NEW] 失败修复缓存：避免重复尝试同样的修复
+        this.failedStabilityRepairs = new Set(); // 格式: "colId:bestScore"
     }
 
     // [New] Build Integer Dictionary & Fuzzy Roots
@@ -392,7 +395,7 @@ class GlobalSequenceOptimizer {
             this.fuzzyRoots[i] = rootId;
         }
 
-        this.onLog(`[SeqOpt] Integer Map Built. ${N} unique regimes. Virtual Roots: ${virtualRoots.size}`);
+        // [Removed verbose log] 仅在调试时使用 console.log
     }
 
     init(existingMasterSeqs = null) {
@@ -459,7 +462,7 @@ class GlobalSequenceOptimizer {
         });
 
         if (existingMasterSeqs) {
-            this.onLog(`[Init] Loaded ${loadedCount}/${this.cols.length} cols.`);
+            // [Removed verbose log]
         }
 
         // 4. Calculate Cutoff Years
@@ -487,87 +490,18 @@ class GlobalSequenceOptimizer {
 
         this.cutoffYears = Array.from(changeYears).sort((a, b) => a - b);
 
-        // 5. Weights Tuning
-        const density = totalSlots > 0 ? filledSlots / totalSlots : 0.1;
+        // 5. Fixed Weights (不再根据密度动态调整，确保分数一致性)
+        // 使用"默认"配置，与之前的优化结果保持兼容
         this.weights = {
             stability: 50,
             continuity: 0.1,
             adjacency: 2.0,
             gap: 0.2
         };
-        if (density < 0.2) {
-            this.weights.gap = 0.4;
-            this.weights.adjacency = 3.0;
-            this.weights.stability = 30;
-        } else if (density > 0.8) {
-            this.weights.gap = 0.1;
-            this.weights.stability = 80;
-        }
-
-        // [New] Precompute Matrix after weights are set
-        this._precomputeContinuityMatrix();
-
-        this.onLog(`SeqOpt (Int): ${this.cutoffYears.length} Keyframes. Density: ${density.toFixed(2)}`);
-    }
-
-
-
-    // [Optimization 4] Precompute Continuity Scores
-    // This eliminates the need to loop through years to calculate basic connectivity score
-    _precomputeContinuityMatrix() {
-        // Cache structure: colPairIndex (0..cols-1) -> Map<RegimeID, Score>
-        this.continuityCache = new Array(this.cols.length - 1);
-
-        const wCont = this.weights.continuity;
-
-        for (let c = 0; c < this.cols.length - 1; c++) {
-            const idA = this.cols[c];
-            const idB = this.cols[c + 1];
-            const scoreMap = new Float32Array(this.intToStr.length); // Direct ID access
-
-            // Loop all intervals
-            const count = this.cutoffYears.length;
-            for (let i = 0; i < count; i++) {
-                const y = this.cutoffYears[i];
-                const nextY = (i < count - 1) ? this.cutoffYears[i + 1] : CONFIG.MAX_YEAR;
-                const duration = nextY - y;
-                const scoreDelta = duration * wCont;
-
-                const setA = this.activeSets[idA][y]; // Set<Int>
-                const setB = this.activeSets[idB][y]; // Set<Int>
-
-                if (!setA || !setB) continue;
-
-                // Intersection with Fuzzy Logic
-                // Iterate smaller set for efficiency? activeSets are usually small (<20).
-                setA.forEach(rA => {
-                    // Check strict match
-                    if (setB.has(rA)) {
-                        scoreMap[rA] += scoreDelta;
-                    } else {
-                        // Check fuzzy match
-                        const rootA = this.fuzzyRoots[rA];
-                        // Does setB contain any Regime with same Root?
-                        // This scan O(M) is okay inside Init.
-                        for (const rB of setB) {
-                            if (this.fuzzyRoots[rB] === rootA) {
-                                scoreMap[rA] += scoreDelta; // Credit goes to rA
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-            this.continuityCache[c] = scoreMap;
-        }
-        this.onLog(`[SeqOpt] Continuity Matrix Precomputed.`);
     }
 
     // [Step 2] Integer-based Greedy Construct using Barycenter Heuristic
     greedyConstruct() {
-        this.onLog(`[Greedy] 开始增强版贪心构造 (整数版)...`);
-        this._precomputeContinuityMatrix(); // Ensure matrix is ready
-
         const result = {};
 
         // === Phase 1: Determine "Year Center" for each regime (Int ID) ===
@@ -617,7 +551,7 @@ class GlobalSequenceOptimizer {
     // [NEW] 潜力导向的针对性修复
     // 识别可以对齐但未对齐的共享政权，系统性地尝试修复
     targetedRepair(seqs, maxRounds = 50) {
-        this.onLog(`[TargetedRepair] 开始潜力扫描...`);
+        // TargetedRepair 开始（移除冗余日志）
         let currentSeqs = JSON.parse(JSON.stringify(seqs));
         let currentScore = this.calculateGlobalScore(currentSeqs);
         let improvements = 0;
@@ -691,7 +625,7 @@ class GlobalSequenceOptimizer {
             }
 
             if (potentials.length === 0) {
-                this.onLog(`[TargetedRepair] 第 ${round + 1} 轮: 无未兑现潜力。`);
+                // [Removed per-round log]
                 break;
             }
 
@@ -774,14 +708,107 @@ class GlobalSequenceOptimizer {
             }
 
             if (!improved) {
-                this.onLog(`[TargetedRepair] 第 ${round + 1} 轮: 无法兑现剩余潜力。`);
+                // [Removed per-round log]
                 break;
             }
         }
 
         const finalScore = this.calculateGlobalScore(currentSeqs);
-        this.onLog(`[TargetedRepair] 完成。共 ${improvements} 次改进。分数: ${Math.floor(finalScore)}`);
+        if (improvements > 0) {
+            this.onLog(`[修复] +${improvements}次改进, 分数: ${Math.floor(finalScore)}`);
+        }
         return { seqs: currentSeqs, score: finalScore };
+    }
+
+    // [NEW] 稳定性修复：检测并修复列内位移问题
+    // 针对某个政权在不同年份的相对位置不一致的情况
+    // bestScore 用于缓存：避免在同一 bestScore 下重复尝试失败的修复
+    stabilityRepair(seqs, bestScore = 0) {
+        let currentSeqs = JSON.parse(JSON.stringify(seqs));
+        let currentScore = this.calculateGlobalScore(currentSeqs);
+        let improvements = 0;
+
+        // === 全局收集所有列的所有位移问题 ===
+        const allShiftProblems = []; // [{colId, regime, shift}]
+
+        for (let c = 0; c < this.cols.length; c++) {
+            const colId = this.cols[c];
+            const seq = currentSeqs[colId];
+            if (!seq || seq.length < 3) continue;
+
+            for (const r of seq) {
+                // 检查缓存：如果这个 colId:regime:bestScore 已失败，跳过
+                const cacheKey = `${colId}:${r}:${Math.floor(bestScore)}`;
+                if (this.failedStabilityRepairs.has(cacheKey)) continue;
+
+                const positions = [];
+                for (const y of this.cutoffYears) {
+                    const activeSet = this.activeSets[colId]?.[y];
+                    if (!activeSet || !activeSet.has(r)) continue;
+
+                    const activeInSeq = seq.filter(x => activeSet.has(x));
+                    const idx = activeInSeq.indexOf(r);
+                    if (idx !== -1 && activeInSeq.length > 1) {
+                        positions.push(idx / (activeInSeq.length - 1));
+                    }
+                }
+                if (positions.length >= 2) {
+                    const shift = Math.max(...positions) - Math.min(...positions);
+                    if (shift >= 0.2) {
+                        allShiftProblems.push({ colId, regime: r, shift });
+                    }
+                }
+            }
+        }
+
+        // === 全局按位移量排序 ===
+        allShiftProblems.sort((a, b) => b.shift - a.shift);
+
+        // === 尝试修复前10个最严重的问题 ===
+        const maxAttempts = 10;
+        let attempts = 0;
+
+        for (const problem of allShiftProblems) {
+            if (attempts >= maxAttempts) break;
+
+            const { colId, regime } = problem;
+            const seq = currentSeqs[colId];
+            const currentIdx = seq.indexOf(regime);
+            if (currentIdx === -1) continue;
+
+            // 尝试所有可能的位置，选择分数最高的
+            let bestNewSeq = null;
+            let bestNewScore = currentScore;
+
+            for (let targetIdx = 0; targetIdx < seq.length; targetIdx++) {
+                if (targetIdx === currentIdx) continue;
+
+                const testSeq = [...seq];
+                testSeq.splice(currentIdx, 1);
+                testSeq.splice(targetIdx > currentIdx ? targetIdx - 1 : targetIdx, 0, regime);
+
+                const testSeqs = { ...currentSeqs, [colId]: testSeq };
+                const newScore = this.calculateScoreOnly(testSeqs);
+
+                if (newScore > bestNewScore) {
+                    bestNewScore = newScore;
+                    bestNewSeq = testSeq;
+                }
+            }
+
+            attempts++;
+
+            if (bestNewSeq) {
+                currentSeqs[colId] = bestNewSeq;
+                currentScore = bestNewScore;
+                improvements++;
+            } else {
+                // 失败，加入缓存
+                this.failedStabilityRepairs.add(`${colId}:${regime}:${Math.floor(bestScore)}`);
+            }
+        }
+
+        return { seqs: currentSeqs, score: currentScore, improvements };
     }
 
     // [NEW] 局部优化：只接受更优解的 Hill Climbing
@@ -1051,6 +1078,7 @@ class GlobalSequenceOptimizer {
     }
 
     // 初始化或全量计算全局分数 (Integer Optimized)
+    // 注意：此函数会重置缓存！仅在需要同步缓存时调用
     calculateGlobalScore(currentSeqs) {
         let totalScore = 0;
         this.pairScores = {};
@@ -1068,10 +1096,28 @@ class GlobalSequenceOptimizer {
         for (let c = 0; c < this.cols.length - 1; c++) {
             const idA = this.cols[c];
             const idB = this.cols[c + 1];
-            // Pass ColIdx 'c' for cache
             const s = this.calculatePairScore(idA, idB, currentSeqs[idA], currentSeqs[idB], c);
             this.pairScores[c] = s;
             totalScore += s;
+        }
+        return totalScore;
+    }
+
+    // [NEW] 只计算分数，不修改缓存（用于 Burst 尝试评估）
+    calculateScoreOnly(currentSeqs) {
+        let totalScore = 0;
+
+        // 1. Column Stability
+        for (let c = 0; c < this.cols.length; c++) {
+            const id = this.cols[c];
+            totalScore += this.calculateColumnStability(id, currentSeqs[id]);
+        }
+
+        // 2. Pair Scores
+        for (let c = 0; c < this.cols.length - 1; c++) {
+            const idA = this.cols[c];
+            const idB = this.cols[c + 1];
+            totalScore += this.calculatePairScore(idA, idB, currentSeqs[idA], currentSeqs[idB], c);
         }
         return totalScore;
     }
@@ -1132,19 +1178,19 @@ class GlobalSequenceOptimizer {
 
     async run(iterations = 500000, updateCallback, stopRef, existingMasterSeqs = null) {
         this.init(existingMasterSeqs);
-        this.onLog("=== SeqOpt v2.2: 潜力导向优化 ===");
+        // [Removed verbose header]
 
         // === Strategy 1: 使用继承的布局（如果存在且有效） ===
         let inheritedSeqs = null;
         let inheritedScore = -Infinity;
 
         // [Debug] 检查传入的 existingMasterSeqs
-        this.onLog(`[Debug] existingMasterSeqs: ${existingMasterSeqs ? Object.keys(existingMasterSeqs).length + '列' : 'NULL'}`);
+        // [Removed debug log]
 
         if (existingMasterSeqs && Object.keys(existingMasterSeqs).length > 0) {
             inheritedSeqs = JSON.parse(JSON.stringify(this.masterSeqs));
             inheritedScore = this.calculateGlobalScore(inheritedSeqs);
-            this.onLog(`[Start] 继承现有布局作为起点 (Score: ${Math.floor(inheritedScore)})`);
+            this.onLog(`[系统] 继承现有布局 (LAY: ${Math.floor(inheritedScore)})`);
         }
 
         // === Strategy 2: 总是尝试贪心构造一次，看是否更优 ===
@@ -1158,7 +1204,7 @@ class GlobalSequenceOptimizer {
         } else {
             const greedSeqs = this.greedyConstruct();
             const greedScore = this.calculateGlobalScore(greedSeqs);
-            this.onLog(`[Start] 贪心构造初始解 (Score: ${Math.floor(greedScore)})`);
+            this.onLog(`[系统] 贪心构造初始解 (LAY: ${Math.floor(greedScore)})`);
             bestSeqs = greedSeqs;
             bestScore = greedScore;
         }
@@ -1173,13 +1219,15 @@ class GlobalSequenceOptimizer {
             if (repairRes.score > currentScore) {
                 currentSeqs = repairRes.seqs;
                 currentScore = repairRes.score;
+                // [Critical Fix] Sync Cache after repair
+                this.calculateGlobalScore(currentSeqs);
                 bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
                 bestScore = currentScore;
             }
         }
 
         // SA Params
-        let temp = 20.0;
+        let temp = 80.0;
         const cooling = 0.9995;
         const n = this.cols.length;
         let lastImprovement = 0;
@@ -1188,13 +1236,33 @@ class GlobalSequenceOptimizer {
         let lastYieldTime = performance.now();
         let lastUIUpdateTime = performance.now();
 
-        // [New] 恢复检查点系统 - 用于 C/D 策略的渐进式恢复检测
-        let recoveryCheckpoint = null; // { triggerIter, bestScoreAtTrigger }
-
         // === SA Loop ===
-        this.onLog(`[Worker] Starting SA Loop for ${iterations} iters...`);
+        this.onLog(`[系统] 启动 SA 优化 (${(iterations / 10000).toFixed(0)}万迭代) | 初始温度: ${temp}`);
         for (let i = 0; i < iterations; i++) {
             if (stopRef.current) break;
+
+            if (i > 0 && i % 5000 === 0) {
+                const sinceBest = i - lastImprovement;
+
+                // [Self-Healing] Sync score to squash incremental drift
+                const realScore = this.calculateGlobalScore(currentSeqs);
+                if (Math.abs(realScore - currentScore) > 0.1) {
+                    if (Math.abs(realScore - currentScore) > 5) {
+                        this.onLog(`[系统] 修正漂移: ${Math.floor(currentScore)} -> ${Math.floor(realScore)}`);
+                    }
+                    currentScore = realScore;
+
+                    // [Critical] 如果修正后的分数高于 bestScore，同步更新
+                    if (currentScore > bestScore) {
+                        bestScore = currentScore;
+                        bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                        lastImprovement = i;
+                        this.failedStabilityRepairs.clear();
+                    }
+                }
+
+                this.onLog(`[进度] ${Math.floor(i / 1000)}k/${iterations / 1000}k | Best: ${Math.floor(bestScore)} | Curr: ${Math.floor(currentScore)} | 卡住: ${Math.round(sinceBest / 1000)}k`);
+            }
 
             // --- Move Type Selection ---
             const moveType = Math.random();
@@ -1298,8 +1366,8 @@ class GlobalSequenceOptimizer {
                         bestScore = currentScore;
                         bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
                         lastImprovement = i;
-                        // this.onLog(`[CoordSwap] +${Math.floor(delta)} at iter ${i} (${colsToSwap.length} cols)`);
                     }
+                    // this.onLog(`[CoordSwap] +${Math.floor(delta)} at iter ${i} (${colsToSwap.length} cols)`);
                 } else {
                     // Revert all swaps
                     for (const c of colsToSwap) {
@@ -1311,6 +1379,7 @@ class GlobalSequenceOptimizer {
                             [seq[idx1], seq[idx2]] = [seq[idx2], seq[idx1]];
                         }
                     }
+                    // [Fix] Restore Cache after rejection
                     this.pairScores = backupPairScores;
                     this.stabilityScores = backupStabilityScores;
                 }
@@ -1321,12 +1390,15 @@ class GlobalSequenceOptimizer {
                 const colId = this.cols[colIdx];
                 const seq = currentSeqs[colId];
                 const len = seq.length;
-                if (len < 3) continue;
+                if (len < 4) continue; // Need at least 4 to have meaningful block move
 
-                const blockSize = 1 + Math.floor(Math.random() * 3); // 1-3 items
-                const start = Math.floor(Math.random() * (len - blockSize));
-                const target = Math.floor(Math.random() * (len - blockSize)); // allow insert anywhere
-                if (Math.abs(start - target) < 1) continue;
+                const maxBlockSize = Math.min(3, len - 2); // Leave at least 2 items outside block
+                const blockSize = 1 + Math.floor(Math.random() * maxBlockSize);
+                const maxStart = len - blockSize;
+                if (maxStart <= 0) continue;
+                const start = Math.floor(Math.random() * maxStart);
+                const target = Math.floor(Math.random() * (len - blockSize + 1));
+                if (Math.abs(start - target) < 2) continue; // Must move at least 2 positions
 
                 // [Fix] Backup Cache because calculateGlobalScore mutates it
                 const backupPairScores = { ...this.pairScores };
@@ -1358,149 +1430,155 @@ class GlobalSequenceOptimizer {
             }
 
             // --- Annealing ---
-            if (i % 500 === 0) temp = Math.max(0.1, temp * cooling);
+            if (i % 500 === 0) temp = Math.max(0.01, temp * cooling);
 
             // --- Reheating / Ripple Repair (If stuck) ---
-            // [Tuned] 降低触发门槛：从50000降到20000，更积极地打破局部最优
-            if (i - lastImprovement > 20000 && i % 5000 === 0) {
+            // 卡住 10k 次后触发，每 2k 次尝试一次
+            if (i - lastImprovement > 10000 && i % 2000 === 0) {
                 const stuckDuration = i - lastImprovement;
                 const strategy = Math.random();
-                this.onLog(`[Stuck] ${stuckDuration} iters without improvement. Triggering escape strategy...`);
+                const iterK = Math.floor(i / 1000);
 
-                // [Redesigned] 权重重新分配: A=35%, B=25%, C=20%, D=20% (移除了E策略)
-                if (strategy < 0.35) {
-                    // Strategy A: Targeted Repair (定向修复) - 35%
-                    this.onLog(`[Strategy A] Targeted Repair...`);
-                    const repairRes = this.targetedRepair(currentSeqs, 10);
-                    if (repairRes.score > currentScore) {
-                        currentSeqs = repairRes.seqs;
-                        currentScore = repairRes.score;
-                        this.onLog(`[Strategy A] Repair improved score to ${Math.floor(currentScore)}`);
-                        if (currentScore > bestScore) {
+                // [Core Fix] 回滚到最佳解，从最优点重新出发
+                currentSeqs = JSON.parse(JSON.stringify(bestSeqs));
+                currentScore = this.calculateGlobalScore(currentSeqs);
+
+                // [Critical Fix] 验证 bestScore 是否准确，修正幻觉分数
+                if (Math.abs(currentScore - bestScore) > 1) {
+                    this.onLog(`[警告] bestScore幻觉修正: ${Math.floor(bestScore)} -> ${Math.floor(currentScore)}`);
+                    bestScore = currentScore;
+                }
+
+                // 策略选择 (各 25%)
+                if (strategy < 0.25) {
+                    // Strategy A: Combined Repair (定向修复 + 稳定性修复) - 25%
+                    // 先尝试 targetedRepair（Gap修复），再尝试 stabilityRepair（Shift修复）
+                    let improved = false;
+
+                    // Phase 1: Gap Repair
+                    const gapRes = this.targetedRepair(currentSeqs, 10);
+                    if (gapRes.score > bestScore) {
+                        currentSeqs = gapRes.seqs;
+                        currentScore = gapRes.score;
+                        this.calculateGlobalScore(currentSeqs);
+                        bestScore = currentScore;
+                        bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                        lastImprovement = i;
+                        this.failedStabilityRepairs.clear(); // 状态变了，清空失败缓存
+                        this.onLog(`[A] Gap修复创新高 ${Math.floor(bestScore)} @ ${iterK}k`);
+                        improved = true;
+                    }
+
+                    // Phase 2: Stability Repair (if Gap didn't help)
+                    if (!improved) {
+                        const stabRes = this.stabilityRepair(currentSeqs, bestScore);
+                        if (stabRes.score > bestScore) {
+                            currentSeqs = stabRes.seqs;
+                            currentScore = stabRes.score;
+                            this.calculateGlobalScore(currentSeqs);
                             bestScore = currentScore;
                             bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
                             lastImprovement = i;
+                            this.failedStabilityRepairs.clear(); // 状态变了，清空失败缓存
+                            this.onLog(`[A] Shift修复创新高 ${Math.floor(bestScore)} @ ${iterK}k`);
+                            improved = true;
                         }
-                    } else {
-                        this.onLog(`[Strategy A] Repair did not improve.`);
                     }
-                } else if (strategy < 0.6) {
+
+                    if (!improved) {
+                        this.onLog(`[A] 修复无突破 @ ${iterK}k`);
+                    }
+                } else if (strategy < 0.5) {
                     // Strategy B: Random Reheat (温度重置) - 25%
-                    temp = stuckDuration > 50000 ? 10.0 : 5.0;
-                    this.onLog(`[Strategy B] Reheat. Temp reset to ${temp.toFixed(1)}`);
-                } else if (strategy < 0.8) {
-                    // Strategy C: Column Shuffle (列内随机打乱) - 20%
-                    // [Redesigned] 渐进式恢复保护
+                    temp = stuckDuration > 30000 ? 100.0 : 50.0;
+                    this.onLog(`[B] 重热 ${temp.toFixed(0)}° (从最优解重启) @ ${iterK}k`);
+                } else if (strategy < 0.75) {
+                    // Strategy C: Column Shuffle (列内优选打乱) - 25%
                     const colIdx = Math.floor(Math.random() * n);
                     const colId = this.cols[colIdx];
                     const seq = currentSeqs[colId];
                     if (seq.length > 3) {
-                        const oldSeq = [...seq]; // 备份
-                        const oldScore = currentScore;
+                        const oldSeq = [...seq];
+                        let bestShuffleSeq = null;
+                        let bestShuffleScore = -Infinity;
 
-                        const shuffleStart = Math.floor(seq.length * 0.15);
-                        const shuffleEnd = Math.floor(seq.length * 0.85);
-                        for (let k = shuffleEnd - 1; k > shuffleStart; k--) {
-                            const j = shuffleStart + Math.floor(Math.random() * (k - shuffleStart + 1));
-                            [seq[k], seq[j]] = [seq[j], seq[k]];
-                        }
-                        const newScore = this.calculateGlobalScore(currentSeqs);
+                        const backupPairScores = { ...this.pairScores };
+                        const backupStabilityScores = { ...this.stabilityScores };
 
-                        // 规则1：分数下降超过30%，立即Jump to Best
-                        if (newScore < bestScore * 0.7) {
-                            currentSeqs[colId] = oldSeq; // 先回滚
-                            currentSeqs = JSON.parse(JSON.stringify(bestSeqs));
-                            currentScore = bestScore;
-                            temp = 5.0;
-                            this.onLog(`[Strategy C] Score drop >30% (${Math.floor(newScore)} vs best ${Math.floor(bestScore)}). Jump to Best.`);
+                        // Burst Try: 200 次打乱，选最优
+                        for (let k = 0; k < 200; k++) {
+                            const tempSeq = [...oldSeq];
+                            const start = Math.floor(tempSeq.length * 0.15);
+                            const end = Math.floor(tempSeq.length * 0.85);
+                            for (let x = end - 1; x > start; x--) {
+                                const y = start + Math.floor(Math.random() * (x - start + 1));
+                                [tempSeq[x], tempSeq[y]] = [tempSeq[y], tempSeq[x]];
+                            }
+                            const s = this.calculateScoreOnly({ ...currentSeqs, [colId]: tempSeq });
+                            if (s > bestShuffleScore) {
+                                bestShuffleScore = s;
+                                bestShuffleSeq = tempSeq;
+                            }
                         }
-                        // 规则2：分数下降但未超过30%，进入渐进式恢复观察期
-                        else if (newScore < oldScore) {
-                            currentScore = newScore;
-                            recoveryCheckpoint = { triggerIter: i, bestScoreAtTrigger: bestScore };
-                            this.onLog(`[Strategy C] Shuffle on ${colId}. Score: ${Math.floor(oldScore)} -> ${Math.floor(newScore)}. Entering recovery mode.`);
+
+                        if (bestShuffleScore > bestScore) {
+                            currentSeqs[colId] = bestShuffleSeq;
+                            currentScore = this.calculateGlobalScore(currentSeqs);
+                            bestScore = currentScore;
+                            bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                            lastImprovement = i;
+                            this.onLog(`[C] 打乱创新高 ${Math.floor(bestScore)} @ ${iterK}k`);
                         } else {
-                            currentScore = newScore;
-                            this.onLog(`[Strategy C] Shuffle on ${colId}. Score: ${Math.floor(oldScore)} -> ${Math.floor(newScore)}`);
+                            this.pairScores = backupPairScores;
+                            this.stabilityScores = backupStabilityScores;
+                            temp = 20.0;
+                            this.onLog(`[C] 打乱无突破 (尝试最优 ${Math.floor(bestShuffleScore)} < 全局 ${Math.floor(bestScore)}) @ ${iterK}k`);
                         }
                     }
                 } else {
-                    // Strategy D: Multi-Column Swap (跨列块交换) - 20%
-                    // [Redesigned] 渐进式恢复保护
-                    const col1 = Math.floor(Math.random() * n);
-                    const col2 = Math.floor(Math.random() * n);
-                    if (col1 !== col2) {
-                        const id1 = this.cols[col1];
-                        const id2 = this.cols[col2];
-                        const seq1 = currentSeqs[id1];
-                        const seq2 = currentSeqs[id2];
-                        const common = seq1.filter(r => seq2.includes(r));
-                        if (common.length >= 2) {
-                            const r1 = common[Math.floor(Math.random() * common.length)];
-                            const r2 = common[Math.floor(Math.random() * common.length)];
-                            if (r1 !== r2) {
-                                const oldScore = currentScore;
-                                const idx1 = seq1.indexOf(r1);
-                                const idx2 = seq1.indexOf(r2);
-                                [seq1[idx1], seq1[idx2]] = [seq1[idx2], seq1[idx1]];
-                                const newScore = this.calculateGlobalScore(currentSeqs);
+                    // Strategy D: Intra-Column Block Move (列内块移动) - 25%
+                    const colIdx = Math.floor(Math.random() * n);
+                    const colId = this.cols[colIdx];
+                    const seq = currentSeqs[colId];
 
-                                // 规则1：分数下降超过30%，立即Jump to Best
-                                if (newScore < bestScore * 0.7) {
-                                    [seq1[idx1], seq1[idx2]] = [seq1[idx2], seq1[idx1]]; // 回滚
-                                    currentSeqs = JSON.parse(JSON.stringify(bestSeqs));
-                                    currentScore = bestScore;
-                                    temp = 5.0;
-                                    this.onLog(`[Strategy D] Score drop >30%. Jump to Best.`);
-                                }
-                                // 规则2：分数下降但未超过30%，进入渐进式恢复观察期
-                                else if (newScore < oldScore) {
-                                    currentScore = newScore;
-                                    recoveryCheckpoint = { triggerIter: i, bestScoreAtTrigger: bestScore };
-                                    this.onLog(`[Strategy D] Swap in ${id1}. Score: ${Math.floor(oldScore)} -> ${Math.floor(newScore)}. Entering recovery mode.`);
-                                } else {
-                                    currentScore = newScore;
-                                    this.onLog(`[Strategy D] Swap in ${id1}. Score: ${Math.floor(oldScore)} -> ${Math.floor(newScore)}`);
-                                }
+                    if (seq.length > 4) {
+                        const oldSeq = [...seq];
+                        const backupPairScores = { ...this.pairScores };
+                        const backupStabilityScores = { ...this.stabilityScores };
+
+                        let bestMoveSeq = null;
+                        let bestMoveScore = -Infinity;
+
+                        // Burst Try: 50 次块移动，选最优
+                        for (let k = 0; k < 50; k++) {
+                            const testSeq = [...oldSeq];
+                            const blockSize = 1 + Math.floor(Math.random() * 3);
+                            const maxStart = testSeq.length - blockSize;
+                            const blockStart = Math.floor(Math.random() * (maxStart + 1));
+                            const block = testSeq.splice(blockStart, blockSize);
+                            const newIndex = Math.floor(Math.random() * (testSeq.length + 1));
+                            testSeq.splice(newIndex, 0, ...block);
+                            const s = this.calculateScoreOnly({ ...currentSeqs, [colId]: testSeq });
+                            if (s > bestMoveScore) {
+                                bestMoveScore = s;
+                                bestMoveSeq = testSeq;
                             }
                         }
+
+                        if (bestMoveScore > bestScore) {
+                            currentSeqs[colId] = bestMoveSeq;
+                            currentScore = this.calculateGlobalScore(currentSeqs);
+                            bestScore = currentScore;
+                            bestSeqs = JSON.parse(JSON.stringify(currentSeqs));
+                            lastImprovement = i;
+                            this.onLog(`[D] 块移创新高 ${Math.floor(bestScore)} @ ${iterK}k`);
+                        } else {
+                            this.pairScores = backupPairScores;
+                            this.stabilityScores = backupStabilityScores;
+                            temp = 20.0;
+                            this.onLog(`[D] 块移无突破 (尝试最优 ${Math.floor(bestMoveScore)} < 全局 ${Math.floor(bestScore)}) @ ${iterK}k`);
+                        }
                     }
-                }
-            }
-
-            // --- [New] 渐进式恢复检查 ---
-            if (recoveryCheckpoint) {
-                const elapsed = i - recoveryCheckpoint.triggerIter;
-                const targetBest = recoveryCheckpoint.bestScoreAtTrigger;
-
-                // 检查是否已恢复到最佳分数
-                if (currentScore >= targetBest) {
-                    this.onLog(`[Recovery] Fully recovered to ${Math.floor(currentScore)}. Exiting recovery mode.`);
-                    recoveryCheckpoint = null;
-                }
-                // 规则2a: 10000次后仍未达到90%
-                else if (elapsed >= 10000 && currentScore < targetBest * 0.9) {
-                    currentSeqs = JSON.parse(JSON.stringify(bestSeqs));
-                    currentScore = bestScore;
-                    temp = 5.0;
-                    recoveryCheckpoint = null;
-                    this.onLog(`[Recovery] 10k iters, still <90% of best (${Math.floor(currentScore)} < ${Math.floor(targetBest * 0.9)}). Jump to Best.`);
-                }
-                // 规则2b: 20000次后仍未达到95%
-                else if (elapsed >= 20000 && currentScore < targetBest * 0.95) {
-                    currentSeqs = JSON.parse(JSON.stringify(bestSeqs));
-                    currentScore = bestScore;
-                    temp = 5.0;
-                    recoveryCheckpoint = null;
-                    this.onLog(`[Recovery] 20k iters, still <95% of best. Jump to Best.`);
-                }
-                // 规则2c: 30000次后仍未达到100%
-                else if (elapsed >= 30000 && currentScore < targetBest) {
-                    currentSeqs = JSON.parse(JSON.stringify(bestSeqs));
-                    currentScore = bestScore;
-                    temp = 5.0;
-                    recoveryCheckpoint = null;
-                    this.onLog(`[Recovery] 30k iters, still <100% of best. Jump to Best.`);
                 }
             }
 
@@ -1509,7 +1587,7 @@ class GlobalSequenceOptimizer {
                 const now = performance.now();
                 if (now - lastYieldTime > 12) {
                     if (now - lastUIUpdateTime > 500) {
-                        if (updateCallback) {
+                        if (updateCallback && bestSeqs) {
                             const layout = this.generateLayout(bestSeqs);
                             updateCallback(layout, bestScore, i);
                         }
@@ -1529,6 +1607,13 @@ class GlobalSequenceOptimizer {
         if (finalRes.score > bestScore) {
             bestSeqs = finalRes.seqs;
             bestScore = finalRes.score;
+        }
+
+        // [Critical] 最终验证分数，防止返回幻觉分数
+        const verifiedScore = this.calculateGlobalScore(bestSeqs);
+        if (Math.abs(verifiedScore - bestScore) > 1) {
+            this.onLog(`[警告] 最终分数修正: ${Math.floor(bestScore)} -> ${Math.floor(verifiedScore)}`);
+            bestScore = verifiedScore;
         }
 
         this.masterSeqs = bestSeqs;
@@ -1601,8 +1686,7 @@ self.onmessage = async (e) => {
 
     // === 2. 快速评分 (Quick Score) ===
     if (type === 'QUICK_SCORE') {
-        const { grid, colOrder, masterSeqs } = payload;
-        // [Fix] Hydrate grid
+        const { grid, colOrder, masterSeqs, isPreview, oldScore } = payload;
         hydrateGrid(grid);
         try {
             // TSP Score
@@ -1616,17 +1700,19 @@ self.onmessage = async (e) => {
             if (masterSeqs) {
                 const optimizer = new GlobalSequenceOptimizer(colOrder, grid, () => { });
                 optimizer.init(masterSeqs);
-                // [Fix] Use internal Integer sequences (optimizer.masterSeqs) for calculation
                 layScore = optimizer.calculateGlobalScore(optimizer.masterSeqs);
             }
 
             self.postMessage({
                 type: 'QUICK_SCORE_RESULT',
                 tspScore: Math.floor(tspScore),
-                layScore: Math.floor(layScore)
+                layScore: Math.floor(layScore),
+                isPreview: isPreview || false,
+                oldScore: oldScore || 0
             });
         } catch (err) {
             console.error(err);
+            self.postMessage({ type: 'LOG', msg: `[Worker Error] QuickScore Failed: ${err.message}` });
         }
         return;
     }
@@ -1639,7 +1725,7 @@ self.onmessage = async (e) => {
         const log = (msg) => self.postMessage({ type: 'LOG', msg });
 
         try {
-            log("=== 🚀 Worker: 启动独立 TSP 排序 ===");
+            // log("=== 🚀 Worker: 启动独立 TSP 排序 ===");
             const colSorter = new AdvancedColumnSorter(data.regions, data.grid, data.names, log);
             await colSorter.precompute();
 
@@ -1675,7 +1761,7 @@ self.onmessage = async (e) => {
         const log = (msg) => self.postMessage({ type: 'LOG', msg });
 
         try {
-            log("=== 🚀 Worker: 启动独立 Layout 优化 ===");
+            // log("=== 🚀 Worker: 启动独立 Layout 优化 ===");
             const cellSorter = new GlobalSequenceOptimizer(colOrder, data.grid, log);
 
             const layCallback = (layout, score, iter) => {
@@ -1748,6 +1834,7 @@ self.onmessage = async (e) => {
             // --- Phase 2: Cell Layout (Sequence) ---
             log(`[Phase 2] 单元格序列对齐`);
             const cellSorter = new GlobalSequenceOptimizer(newColOrder, data.grid, log);
+            cellSorter.fuzzyRoots = data.fuzzyRoots;
 
             // 运行 LAY
             const layCallback = (layout, score, iter) => {

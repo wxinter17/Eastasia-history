@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v11.01)</title>
+    <title>东亚历史全景 (v11.02)</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.04.003';
+        window.APP_VERSION = '2026.01.04.004';
     </script>
 
     <!-- [Unified CSS] Native Style (Merged) -->
@@ -2034,11 +2034,17 @@
                                     left = slotIdx * width;
                                 }
                             } else {
-                                // 如果 layout 里没找到该政权 (可能是数据不一致)，
-                                // 策略 A: 隐藏 (width=0)
-                                // 策略 B: 全宽显示 (width=100) 并置顶
-                                // 这里采用策略 B 以免政权消失
-                                width = 100; left = 0;
+                                // [Fix] 如果 layout 里没找到该政权 (数据不一致)
+                                // 改为追加到列末尾，而不是全宽覆盖
+                                const effectiveTotal = Math.max(totalSlots, 1) + 1; // 假装多一个槽位
+                                width = 100 / effectiveTotal;
+                                left = Core.state.isFlipped ? 0 : (effectiveTotal - 1) * width; // 放最后
+                                // 控制台警告（仅首次）
+                                if (!this._warnedMissingLayout) this._warnedMissingLayout = new Set();
+                                if (!this._warnedMissingLayout.has(targetID)) {
+                                    console.warn(`[Layout] 政权 "${regimeName}" 在 Layout 中未找到，已追加到列末尾`);
+                                    this._warnedMissingLayout.add(targetID);
+                                }
                             }
 
                             // 状态变更检测

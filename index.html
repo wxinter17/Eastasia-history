@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史交互地图系统 (v5.01)</title>
+    <title>东亚历史交互地图系统 (v5.02)</title>
 
     <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
     <script>
-        window.APP_VERSION = '2026.01.04.003';
+        window.APP_VERSION = '2026.01.04.004';
         window.APP_CONFIG = {
             // 缓存版本检查
             checkCache: function () {
@@ -1553,6 +1553,9 @@
                 this.state.rawData = data;
                 this.state.dataReady = true;
 
+                // [New] CSV-Layout 一致性校验
+                this.checkLayoutConsistency(data);
+
                 const loader = document.getElementById('global-loader');
                 if (loader) {
                     loader.style.opacity = 0;
@@ -1561,6 +1564,77 @@
 
                 this.broadcastData();
                 this.handleUrlParams();
+            },
+
+            // [New] 检查 CSV 和 Layout 数据一致性
+            checkLayoutConsistency: function (csvData) {
+                if (!this.state.layoutData || !this.state.layoutData.layout) {
+                    console.warn('[Layout] 未加载 Layout 数据，跳过一致性检查');
+                    return;
+                }
+
+                // 1. 提取 CSV 中所有政权名称
+                const csvRegimes = new Set();
+                csvData.forEach(row => {
+                    if (row.name) csvRegimes.add(row.name);
+                });
+
+                // 2. 提取 Layout 中所有政权名称
+                const layoutRegimes = new Set();
+                const layout = this.state.layoutData.layout;
+                Object.values(layout).forEach(slots => {
+                    if (Array.isArray(slots)) {
+                        slots.forEach(name => layoutRegimes.add(name));
+                    }
+                });
+
+                // 3. 计算差异
+                const newInCsv = [...csvRegimes].filter(r => !layoutRegimes.has(r));
+                const removedFromCsv = [...layoutRegimes].filter(r => !csvRegimes.has(r));
+
+                // 4. 输出日志
+                if (newInCsv.length > 0) {
+                    console.warn(`[Layout] 发现 ${newInCsv.length} 个新政权未在 Layout 中:`, newInCsv);
+                }
+                if (removedFromCsv.length > 0) {
+                    console.log(`[Layout] ${removedFromCsv.length} 个政权已从 CSV 移除:`, removedFromCsv);
+                }
+
+                // 5. 开发模式弹窗提示
+                const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                if (isDev && newInCsv.length > 0) {
+                    this.showNewRegimesAlert(newInCsv);
+                }
+            },
+
+            // [New] 开发模式：显示新政权提示弹窗
+            showNewRegimesAlert: function (newRegimes) {
+                const maxShow = 10;
+                const displayList = newRegimes.slice(0, maxShow).join(', ');
+                const more = newRegimes.length > maxShow ? ` 等 ${newRegimes.length} 个` : '';
+
+                const msg = `
+                    <div style="text-align:left; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                        <p style="color:#60a5fa; font-weight:bold; font-size:16px; margin-bottom:8px">🆕 检测到新政权</p>
+                        <p style="margin-bottom:8px; font-size:13px; line-height:1.5; word-break:break-all;">${displayList}${more}</p>
+                        <p style="margin-bottom:12px; font-size:12px; opacity:0.7;">这些政权在 Layout 中没有位置数据，将显示在列末尾。</p>
+                        <div style="display:flex; gap:10px; justify-content:flex-end;">
+                            <button id="btn-ignore-new" style="padding:6px 12px; background:#334155; border:none; color:#fff; border-radius:6px; cursor:pointer;">忽略</button>
+                            <button id="btn-open-optimizer" style="padding:6px 12px; background:#3b82f6; border:none; color:#fff; border-radius:6px; cursor:pointer;">打开布局优化器</button>
+                        </div>
+                    </div>
+                `;
+
+                const div = document.createElement('div');
+                div.innerHTML = msg;
+                div.style.cssText = 'position:fixed; top:80px; right:20px; width:360px; background:#1e293b; color:#fff; padding:20px; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.6); border:2px solid #3b82f6; z-index:999999;';
+                document.body.appendChild(div);
+
+                div.querySelector('#btn-ignore-new').onclick = () => div.remove();
+                div.querySelector('#btn-open-optimizer').onclick = () => {
+                    window.open('LayoutOptimizer.html', '_blank');
+                    div.remove();
+                };
             },
 
             broadcastData: function () {

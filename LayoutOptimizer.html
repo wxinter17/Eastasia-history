@@ -8,7 +8,7 @@
 
     <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
     <script>
-        window.APP_VERSION = '2026.01.04.003';
+        window.APP_VERSION = '2026.01.04.005';
         window.APP_CONFIG = {
             // CDN Fallback URLs
             CDN_REACT: 'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
@@ -331,7 +331,13 @@
                 }
                 else if (type === 'QUICK_SCORE_RESULT') {
                     setTspBestScore(Math.floor(tspScore));
-                    setLayoutScore(Math.floor(layScore));
+                    // 检查是否是预览计算（通过 isPreview 标记）
+                    if (e.data.isPreview) {
+                        setScoreComparison({ old: e.data.oldScore || layoutScore, new: Math.floor(layScore) });
+                        addLog(`[Manual] 预计算完成。原分: ${e.data.oldScore || layoutScore} -> 新分: ${Math.floor(layScore)}`);
+                    } else {
+                        setLayoutScore(Math.floor(layScore));
+                    }
                 }
                 else if (type === 'PROGRESS_TSP') {
                     setTspBestScore(Math.floor(score));
@@ -349,9 +355,7 @@
                     setLayoutScore(Math.floor(score));
 
                     // Log progress periódically (5000 iters)
-                    if (iter && iter % 5000 === 0) {
-                        addLog(`[LayOpt] 迭代 ${iter} / ${500000}... Score: ${Math.floor(score)}`);
-                    }
+                    // [Clean] 移除 UI 端生成的旧进度日志，完全依赖 Worker 的 LOG 消息
                 }
                 else if (type === 'RESULT_FINAL') {
                     setColOrder(newColOrder);
@@ -386,7 +390,8 @@
 
             const initWorker = () => {
                 if (workerRef.current) workerRef.current.terminate();
-                workerRef.current = new Worker('layout-worker.js?v=' + window.APP_VERSION);
+                // [Debug] Use timestamp to force reload worker during dev
+                workerRef.current = new Worker('layout-worker.js?t=' + Date.now());
                 workerRef.current.onmessage = onWorkerMessage;
             };
 
@@ -562,7 +567,7 @@
                 if (!data || status !== 'ready') return;
                 stopRef.current = false;
                 setStatus('optimizing');
-                addLog("=== 步骤 1: 独立列排序 (TSP Worker) ===");
+                addLog("[系统] 启动 TSP 排序优化...");
 
                 if (workerRef.current) {
                     workerRef.current.postMessage({
@@ -580,8 +585,7 @@
                 if (!data || status !== 'ready') return;
                 stopRef.current = false;
                 setStatus('optimizing');
-                addLog("=== 步骤 2: 独立布局优化 (Layout Worker) ===");
-                addLog(`[Debug] masterSeqs 状态: ${masterSeqs ? Object.keys(masterSeqs).length + '列' : 'NULL'}`);
+                addLog("[系统] 启动 LAY 布局优化...");
 
                 if (workerRef.current) {
                     workerRef.current.postMessage({
@@ -601,7 +605,7 @@
                 // stopRef.current is strictly for UI toggle state now, worker has internal flag
                 stopRef.current = false;
                 setStatus('optimizing');
-                addLog("=== 🚀 启动深度联合优化 (Worker版) ===");
+                addLog("[系统] 启动深度联合优化...");
 
                 if (workerRef.current) {
                     workerRef.current.postMessage({
@@ -609,11 +613,11 @@
                         payload: {
                             data: prepareWorkerData(data),
                             colOrder: colOrder,
-                            masterSeqs: masterSeqs, // Pass current state as seed
+                            masterSeqs: masterSeqs,
                             tspBestScore: tspBestScore,
                             iterations: {
-                                tsp: 50000000, // 50M
-                                lay: 500000   // 500k
+                                tsp: 50000000,
+                                lay: 500000
                             }
                         }
                     });
@@ -790,19 +794,19 @@
                     setInteractionMode('confirm-move');
 
                     try {
-                        // Pre-calculate score
                         const rA = moveRegimeA;
                         const rB = regime;
 
-                        // [Fix] Must initialize weights via init()
-                        const sorter = new GlobalSequenceOptimizer(colOrder, data.grid, () => { });
-                        sorter.init(JSON.parse(JSON.stringify(masterSeqs)));
+                        // 模拟移动：在主线程中直接操作序列数组
+                        const testMasterSeqs = JSON.parse(JSON.stringify(masterSeqs));
+                        const seq = testMasterSeqs[targetRegion];
 
-                        const oldScore = sorter.calculateGlobalScore(sorter.masterSeqs);
+                        if (!seq) {
+                            addLog(`[Error] 目标地区序列不存在: ${targetRegion}`);
+                            return;
+                        }
 
-                        // Simulate Move: Insert A before B
-                        const seq = sorter.masterSeqs[targetRegion];
-                        // Helper
+                        // Helper to find index robustly
                         const findIndex = (s, target) => {
                             let idx = s.indexOf(target);
                             if (idx !== -1) return idx;
@@ -812,50 +816,51 @@
 
                         const idxA = findIndex(seq, rA);
                         if (idxA === -1) {
-                            // A 不存在序列中，可能是名称不匹配，尝试严格模式失败后的降级
-                            console.warn(`[Precheck] A not found: ${rA}`);
+                            addLog(`[Error] 无法找到政权 A: ${rA}`);
                             return;
                         }
 
-                        // Remove A first
                         seq.splice(idxA, 1);
-
                         let idxB = findIndex(seq, rB);
                         if (idxB === -1) {
-                            console.warn(`[Precheck] B not found: ${rB}`);
+                            addLog(`[Error] 无法找到政权 B: ${rB}`);
                             return;
                         }
-
-                        // Insert A at B
                         seq.splice(idxB, 0, rA);
+                        testMasterSeqs[targetRegion] = seq;
 
-                        sorter.masterSeqs[targetRegion] = seq;
-                        const newScore = sorter.calculateGlobalScore(sorter.masterSeqs);
-
-                        setScoreComparison({ old: Math.floor(oldScore), new: Math.floor(newScore) });
-                        addLog(`[Manual] 预计算完成。原分: ${Math.floor(oldScore)} -> 新分: ${Math.floor(newScore)}`);
+                        // 通过 Worker 计算分数（带上 isPreview 标记）
+                        if (workerRef.current) {
+                            workerRef.current.postMessage({
+                                type: 'QUICK_SCORE',
+                                payload: {
+                                    grid: prepareGrid(data.grid, data.regions),
+                                    colOrder: colOrder,
+                                    masterSeqs: testMasterSeqs,
+                                    isPreview: true,
+                                    oldScore: layoutScore
+                                }
+                            });
+                            addLog(`[Manual] 正在计算预期分数...`);
+                        }
                     } catch (e) {
                         console.error(e);
                         addLog(`[Error] 预计算失败: ${e.message}`);
-                        setInteractionMode('select-regime-b'); // Revert
+                        setInteractionMode('select-regime-b');
                     }
                 }
             };
 
             const confirmMove = () => {
                 try {
-                    const sorter = new GlobalSequenceOptimizer(colOrder, data.grid, () => { });
-                    sorter.init(JSON.parse(JSON.stringify(masterSeqs)));
-
-                    const seq = sorter.masterSeqs[targetRegion];
+                    const newMasterSeqs = JSON.parse(JSON.stringify(masterSeqs));
+                    const seq = newMasterSeqs[targetRegion];
                     const rA = moveRegimeA;
                     const rB = moveRegimeB;
 
-                    // Helper to find index robustly
                     const findIndex = (s, target) => {
                         let idx = s.indexOf(target);
                         if (idx !== -1) return idx;
-                        // Try fuzzy match (ignore pipe suffix/prefix mismatch)
                         const targetBase = target.split('|')[0];
                         return s.findIndex(item => item.split('|')[0] === targetBase);
                     };
@@ -863,20 +868,36 @@
                     const idxA = findIndex(seq, rA);
                     if (idxA === -1) throw new Error(`无法在当前序列中找到政权: ${rA}`);
 
-                    // Remove A first
                     seq.splice(idxA, 1);
 
                     const idxB = findIndex(seq, rB);
                     if (idxB === -1) throw new Error(`无法在当前序列中找到目标政权: ${rB}`);
 
-                    // Insert A at B
                     seq.splice(idxB, 0, rA);
+                    newMasterSeqs[targetRegion] = seq;
 
-                    // Update State
-                    setMasterSeqs(sorter.masterSeqs);
-                    const newLayout = sorter.generateLayout(sorter.masterSeqs);
-                    setCellLayout(newLayout);
-                    setLayoutScore(scoreComparison?.new || sorter.calculateGlobalScore(sorter.masterSeqs));
+                    // 更新状态
+                    setMasterSeqs(newMasterSeqs);
+
+                    // 通过 Worker 计算新分数
+                    if (workerRef.current) {
+                        workerRef.current.postMessage({
+                            type: 'QUICK_SCORE',
+                            payload: {
+                                grid: prepareGrid(data.grid, data.regions),
+                                colOrder: colOrder,
+                                masterSeqs: newMasterSeqs
+                            }
+                        });
+                    }
+
+                    // 使用正确的函数生成可渲染布局
+                    const renderable = generateCellLayout(newMasterSeqs);
+                    setCellLayout(renderable);
+
+                    if (scoreComparison?.new) {
+                        setLayoutScore(scoreComparison.new);
+                    }
 
                     addLog(`[Manual] 修改已应用。`);
                     resetManualMode();
