@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v11.03)</title>
+    <title>东亚历史全景 (v11.04)</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.05.001';
+        window.APP_VERSION = '2026.01.06.001';
     </script>
 
     <!-- [Unified CSS] Native Style (Merged) -->
@@ -1142,7 +1142,17 @@
 
 
         const Core = {
-            state: { regions: [], regionIndexMap: {}, regimeGroups: [], zoom: 1.5, rawData: [], features: { connections: true }, focusedGroupId: null, lastClickedGeoCode: null, layoutCache: {}, intraColumnCache: {}, isFlipped: false },
+            state: { regions: [], regionIndexMap: {}, regimeGroups: [], zoom: 1.5, rawData: [], features: { connections: true }, selectedRegimeId: null, lastClickedGeoCode: null, layoutCache: {}, intraColumnCache: {}, isFlipped: false },
+
+            // [New] State sync: Report state changes (e.g. clicks) to parent
+            updateParentState: function (updates) {
+                if (window.parent !== window) {
+                    window.parent.postMessage({
+                        type: 'STATE_UPDATE_REQUEST',
+                        payload: updates
+                    }, window.location.origin);
+                }
+            },
 
             init: function () {
                 // [Fix] 禁用浏览器滚动恢复
@@ -1153,133 +1163,7 @@
                 // [Fix] 记录初始化时间，用于拦截初始阶段的错误滚动指令
                 this._initTime = Date.now();
 
-                // [v10] 新布局加载策略：IndexedDB + Static (版本号控制)
-                this.state.layoutData = null;
-                this.state.layoutSource = null;
 
-                const isDevelopment = () => {
-                    const host = location.hostname;
-                    return host === 'localhost' || host === '127.0.0.1' ||
-                        host.startsWith('192.168.') || location.protocol === 'file:';
-                };
-
-                // 应用布局并触发更新
-                const applyLayout = (json, source) => {
-                    console.log(`📜 Layout loaded from [${source}]` + (json.version ? ` v${json.version}` : ''));
-                    this.state.layoutData = json;
-                    this.state.layoutSource = source;
-                    if (this.state.rawData && this.state.rawData.length > 0) {
-                        this.updateLayout();
-                        // [v10] 异步执行一致性检测
-                        setTimeout(() => this.checkLayoutConsistency(), 100);
-                    }
-                };
-
-                // 保存布局到 IndexedDB
-                const saveToIndexedDB = (layoutData) => {
-                    try {
-                        const req = indexedDB.open("EastAsiaHistoryDB", 5);
-                        req.onupgradeneeded = (e) => {
-                            const db = e.target.result;
-                            if (!db.objectStoreNames.contains("layouts")) {
-                                db.createObjectStore("layouts", { keyPath: "id" });
-                            }
-                        };
-                        req.onsuccess = (e) => {
-                            const db = e.target.result;
-                            const tx = db.transaction(["layouts"], "readwrite");
-                            const store = tx.objectStore("layouts");
-                            store.put({ id: "current", data: layoutData });
-                            console.log(`💾 Layout saved to IndexedDB (v${layoutData.version || 'unknown'})`);
-                        };
-                    } catch (e) {
-                        console.warn("Failed to save to IndexedDB:", e);
-                    }
-                };
-
-                // [v10] 加载 Static 布局
-                const loadStatic = () => {
-                    return fetch('layout.json?t=' + Date.now())
-                        .then(response => {
-                            if (!response.ok) throw new Error('Network response was not ok');
-                            return response.json();
-                        });
-                };
-
-                // [v10] 主加载逻辑：先获取 Static，再与 DB 比较版本
-                const loadLayout = async () => {
-                    let staticLayout = null;
-                    let dbLayout = null;
-
-                    // Step 1: 尝试加载 Static
-                    try {
-                        staticLayout = await loadStatic();
-                        console.log(`📦 Static layout loaded (v${staticLayout.version || 'unknown'})`);
-                    } catch (e) {
-                        console.error("❌ Failed to load layout.json:", e);
-                        if (isDevelopment()) {
-                            alert("CSV/Layout 加载失败，请检查数据源！");
-                        }
-                    }
-
-                    // Step 2: 尝试读取 IndexedDB
-                    try {
-                        dbLayout = await new Promise((resolve, reject) => {
-                            const req = indexedDB.open("EastAsiaHistoryDB", 5);
-                            req.onerror = () => reject(new Error("DB Open Failed"));
-                            req.onupgradeneeded = (e) => {
-                                const db = e.target.result;
-                                if (!db.objectStoreNames.contains("layouts")) {
-                                    db.createObjectStore("layouts", { keyPath: "id" });
-                                    console.log("[DB] Created 'layouts' store during upgrade");
-                                }
-                            };
-                            req.onsuccess = (e) => {
-                                const db = e.target.result;
-                                if (!db.objectStoreNames.contains("layouts")) {
-                                    resolve(null);
-                                    return;
-                                }
-                                const tx = db.transaction(["layouts"], "readonly");
-                                const store = tx.objectStore("layouts");
-                                const getReq = store.get("current");
-                                getReq.onsuccess = () => resolve(getReq.result?.data || null);
-                                getReq.onerror = () => resolve(null);
-                            };
-                        });
-                        if (dbLayout) {
-                            console.log(`📂 DB layout found (v${dbLayout.version || 'unknown'})`);
-                        }
-                    } catch (e) {
-                        console.warn("DB read failed:", e);
-                    }
-
-                    // Step 3: 版本比较决策
-                    const staticVersion = staticLayout?.version || "0";
-                    const dbVersion = dbLayout?.version || "0";
-
-                    if (!dbLayout) {
-                        // DB 为空，使用 Static 并初始化 DB
-                        if (staticLayout) {
-                            applyLayout(staticLayout, 'Static');
-                            saveToIndexedDB(staticLayout);
-                            console.log("🔄 Initialized DB from Static");
-                        } else {
-                            console.error("❌ No layout available!");
-                        }
-                    } else if (staticVersion > dbVersion) {
-                        // Static 版本更新，覆盖 DB
-                        applyLayout(staticLayout, 'Static');
-                        saveToIndexedDB(staticLayout);
-                        console.log(`🔄 Updated DB from Static (${dbVersion} → ${staticVersion})`);
-                    } else {
-                        // DB 版本 >= Static，使用 DB
-                        applyLayout(dbLayout, 'IndexedDB');
-                    }
-                };
-
-                // 执行加载
-                loadLayout();
 
                 window.addEventListener('message', (e) => {
                     // 【关键修复】安全阀
@@ -1292,12 +1176,22 @@
 
                     // 2. 初始化数据与样式注入
                     if (type === 'INIT_DATA') {
-                        const { data, sharedCSS } = payload;
+                        const { data, sharedCSS, sliceData, layout } = payload;
 
                         // [关键修复] 注入父级发来的 CSS (解决 texture-V/J 虚线和网格不显示的问题)
                         if (sharedCSS) {
                             const styleEl = document.getElementById('dynamic-styles');
                             if (styleEl) styleEl.innerHTML = sharedCSS;
+                        }
+
+                        // [New v10] 保存预计算数据
+                        if (layout) {
+                            console.log('[Panorama] Layout data received');
+                            this.state.layoutData = layout; // 包含 colOrder
+                        }
+                        if (sliceData) {
+                            console.log('[Panorama] Slice data received');
+                            this.state.sliceData = sliceData;
                         }
 
                         // 处理核心数据
@@ -1332,17 +1226,7 @@
                         this.toggleFeature(payload);
                     }
 
-                    // 6. 搜索结果跳转
-                    if (type === 'CMD_SEARCH_RESULT') {
-                        if (payload.target === 'panorama') {
-                            this.handleJump(payload.params);
-                        }
-                    }
 
-                    // 7. 直接跳转指令
-                    if (type === 'CMD_JUMP') {
-                        this.handleJump(payload);
-                    }
 
                     // 8. 同步滚动指令 [Fix] 拦截初始化阶段的现代年份
                     if (type === 'CMD_SCROLL_TO_YEAR') {
@@ -1360,39 +1244,43 @@
                         // 接收父页面的全局状态，更新本地视图
                         const appState = payload;
 
-                        // 1. 同步年份（使用全景的滚动方法）
-                        // 1. 同步年份（使用全景的滚动方法）
+                        // 1. 同步年份
                         if (appState.year !== undefined && window.scrollToYear) {
-                            // [Fix] User Priority: 用户正在交互时，忽略外部同步以防止冲突 (与 map.html 行为一致)
-                            if (this._userScrolling) {
-                                // console.log('User interacting, skip sync');
-                            } else {
+                            if (!this._userScrolling) {
                                 window.scrollToYear(appState.year);
                             }
                         }
 
-                        // 2. 同步选中的政权（如果有高亮方法）
-                        if (appState.selectedRegime !== undefined) {
-                            if (appState.selectedRegime) {
-                                // 全景视图的政权高亮逻辑（如果有）
-                                console.log('[Panorama] Selected regime:', appState.selectedRegime);
-                            } else {
-                                // 清除选中
-                                console.log('[Panorama] Clear regime selection');
+                        // 2. 同步选中的政权 & 区域
+                        if (appState.region) {
+                            if (!this.state.lastClickedGeoCode || this.state.lastClickedGeoCode !== appState.region) {
+                                if (this.ui && this.ui.highlightHeader) this.ui.highlightHeader(appState.region);
                             }
+                            this.state.lastClickedGeoCode = String(appState.region);
                         }
 
-                        // 3. 同步锁定状态
-                        if (appState.locked !== undefined) {
-                            console.log('[Panorama] Regime locked:', appState.locked);
+                        if (appState.selectedRegimeId) {
+                            const targetId = appState.selectedRegimeId;
+                            const target = this.state.regimeGroups.find(g => g.regimeId === targetId);
+                            const alreadyFocused = target && this.state.selectedRegimeId === target.regimeId;
+
+                            if (target && !alreadyFocused) {
+                                // [Fix] 立即更新逻辑状态，确保在动画或重绘期间状态一致
+                                this.state.selectedRegimeId = targetId;
+
+                                setTimeout(() => {
+                                    if (this.ui && this.ui.jumpToRegime) {
+                                        this.ui.jumpToRegime(target, false);
+                                    }
+                                }, 50);
+                            }
+                        } else if (appState.selectedRegimeId === null && this.state.selectedRegimeId) {
+                            // 清除选中
+                            if (this.ui && this.ui.closePanel) this.ui.closePanel();
                         }
 
                         // 调试日志
-                        console.log('[Panorama] STATE_SYNC received:', {
-                            year: appState.year,
-                            selectedRegime: appState.selectedRegime,
-                            locked: appState.locked
-                        });
+                        // console.log('[Panorama] STATE_SYNC received:', appState);
                     }
                 });
 
@@ -1417,7 +1305,7 @@
                 this._userScrolling = false;
 
                 mainContent.addEventListener('scroll', () => {
-                    if (isProgrammaticScroll) return;
+                    if (isProgrammaticScroll || window._isProgrammaticScroll) return;
 
                     // 标记用户正在滚动
                     this._userScrolling = true;
@@ -1523,7 +1411,7 @@
                 for (const frag of this.state.rawData) {
                     const geoId = frag.geoCode;
                     // id format: Name|Code
-                    const parts = frag.group.id.split('|');
+                    const parts = frag.group.regimeId.split('|');
                     const rcode = parts.length > 1 ? parts[1] : parts[0];
                     if (!csvRegimeMap[geoId]) csvRegimeMap[geoId] = new Set();
                     csvRegimeMap[geoId].add(rcode);
@@ -1740,8 +1628,8 @@
                     // 初始化 Group
                     if (!groups[key]) {
                         groups[key] = {
-                            id: key,
-                            groupId: 'g-' + this.logic.simpleHash(key),
+                            regimeId: key, // [Unified] 政权唯一标识符 (格式: Name|Code)
+                            groupId: 'g-' + this.logic.simpleHash(key), // CSS class name (hash)
                             name: regimeName,  // 显示名称仍然是 regimeName
                             regimeCode: regimeCode,
                             minStart: 9999, maxEnd: -9999,
@@ -1817,18 +1705,25 @@
 
                 this.logic.calculateGroupCenters(this.state.regimeGroups, this.state.regionIndexMap);
                 this.render.drawAll();
+                this.state.dataReady = true;
 
-                // [Fix] 初始加载时滚动到顶部（最早时间）
-                if (!this.state.hasInitialScrolled) {
+                // [Fix] 处理暂存的滚动请求（解决初始化数据未加载完成时的滚动丢失问题）
+                if (window._pendingScrollYear !== null) {
+                    const target = window._pendingScrollYear;
+                    window._pendingScrollYear = null;
+                    setTimeout(() => window.scrollToYear(target), 50);
                     this.state.hasInitialScrolled = true;
-                    // 使用较长的 setTimeout 确保覆盖其他滚动命令
+                }
+                // [Fix] 初始加载时，如果没有任何外部指令，默认滚动到顶部
+                else if (!this.state.hasInitialScrolled) {
+                    this.state.hasInitialScrolled = true;
                     setTimeout(() => {
                         const mainContent = document.getElementById('main-content');
                         if (mainContent) {
                             mainContent.scrollTop = 0;
                             mainContent.scrollLeft = 0;
                         }
-                    }, 500);
+                    }, 50);
                 }
             },
 
@@ -1848,16 +1743,7 @@
                 return { bg: '#666', border: '#444', className: 'texture-N', isDashed: false };
             },
 
-            handleJump: function (payload) {
-                if (payload.year) {
-                    const targetY = (parseInt(payload.year) - APP_CONFIG.minYear) * this.state.zoom;
-                    document.getElementById('main-content').scrollTo({ top: targetY, behavior: 'smooth' });
-                }
-                if (payload.regime) {
-                    const target = this.state.regimeGroups.find(g => g.name.includes(payload.regime));
-                    if (target) setTimeout(() => this.ui.jumpToRegime(target), 300);
-                }
-            },
+
 
             logic: {
                 // [New] Perspective-Based Layout Optimization
@@ -1867,7 +1753,7 @@
                     const coreRegions = new Set();
 
                     Core.state.regimeGroups.forEach(group => {
-                        if (perspective.coreRegimes.includes(group.id)) {
+                        if (perspective.coreRegimes.includes(group.regimeId)) {
                             group.fragments.forEach(frag => {
                                 coreRegions.add(frag.geoCode);
                             });
@@ -1881,7 +1767,7 @@
                 // Check if two regions belong to the same core regime
                 belongToSameRegime: function (regionA, regionB, coreRegimes) {
                     for (let regimeId of coreRegimes) {
-                        const group = Core.state.regimeGroups.find(g => g.id === regimeId);
+                        const group = Core.state.regimeGroups.find(g => g.regimeId === regimeId);
                         if (!group) continue;
 
                         const regionsInRegime = new Set(group.fragments.map(f => f.geoCode));
@@ -1984,97 +1870,64 @@
                     if (!regionObj) return [];
                     const regionId = regionObj.id;
 
-                    // 2. 检查是否有预计算的 layout 数据
-                    const hasLayout = Core.state.layoutData && Core.state.layoutData.layout && Core.state.layoutData.layout[regionId];
-                    const layoutMap = hasLayout ? Core.state.layoutData.layout[regionId] : null;
+                    // 2. 检查是否有预计算的 Slice 数据 (优先)
+                    const sliceData = Core.state.sliceData && Core.state.sliceData[regionId];
 
-                    // 如果没有布局数据，直接返回全宽 (Fallback)
-                    if (!layoutMap) {
-                        fragments.forEach(f => {
-                            const newFrag = Object.assign({}, f);
-                            newFrag.displayStart = f.start;
-                            newFrag.displayEnd = f.end;
-                            newFrag.leftPct = 0;
-                            newFrag.widthPct = 100;
-                            newFrag.group.visualSlices.push({
-                                cIdx: colIdx,
-                                start: f.start, end: f.end,
-                                left: 0, w: 1, dur: f.end - f.start
+                    if (sliceData && sliceData.length > 0) {
+                        // === 新逻辑：基于 Slice 数据生成 ===
+                        fragments.forEach(frag => {
+                            const fStart = frag.start;
+                            const fEnd = frag.end;
+                            const regimeName = frag.group.name;
+                            const regimeCode = frag.group.regimeCode || regimeName;
+                            const targetID = regimeName + "|" + regimeCode;
+
+                            // 遍历该区域的所有切片
+                            // 优化：可以使用二分查找找到起始切片，这里暂时遍历
+                            sliceData.forEach(slice => {
+                                // 检查切片是否与政权时间有交集
+                                const sStart = slice.start;
+                                const sEnd = slice.end;
+                                if (sEnd <= fStart || sStart >= fEnd) return;
+
+                                // 计算交集时间段
+                                const overlapStart = Math.max(fStart, sStart);
+                                const overlapEnd = Math.min(fEnd, sEnd);
+                                if (overlapStart >= overlapEnd) return;
+
+                                // 查找政权在该切片中的位置
+                                const slots = slice.slots;
+                                let slotIdx = slots.indexOf(targetID);
+                                // 兼容只存 ID 的情况
+                                if (slotIdx === -1) slotIdx = slots.findIndex(id => id.startsWith(regimeName + '|'));
+
+                                let totalSlots = slots.length;
+                                let left = 0, width = 100;
+
+                                if (slotIdx !== -1) {
+                                    width = 100 / totalSlots;
+                                    if (Core.state.isFlipped) {
+                                        left = (totalSlots - 1 - slotIdx) * width;
+                                    } else {
+                                        left = slotIdx * width;
+                                    }
+                                } else {
+                                    // 没找到（可能是数据不一致或新政权）
+                                    // 仍然显示，追加到末尾
+                                    const effectiveTotal = Math.max(totalSlots, 1) + 1;
+                                    width = 100 / effectiveTotal;
+                                    left = Core.state.isFlipped ? 0 : (effectiveTotal - 1) * width;
+                                }
+
+                                pushSlice(slices, frag, overlapStart, overlapEnd, left, width, colIdx);
                             });
-                            slices.push(newFrag);
                         });
                         return slices;
                     }
 
-                    // 3. 基于 layout.json 切割时段
-                    fragments.forEach(frag => {
-                        const regimeName = frag.group.name;
-                        const regimeCode = frag.group.regimeCode || regimeName; // [Fix] 获取 Code
-
-                        // [Fix] 构造目标 ID，必须匹配 LayoutOptimizer 的 'Name|Code' 格式
-                        const targetID = regimeName + "|" + regimeCode;
-
-                        const start = Math.max(frag.start, APP_CONFIG.minYear);
-                        const end = Math.min(frag.end, APP_CONFIG.maxYear);
-                        if (start >= end) return;
-
-                        let currStart = start;
-                        let currLeft = -1;
-                        let currWidth = -1;
-
-                        for (let y = start; y < end; y++) {
-                            const yearKey = String(y);
-                            const slots = layoutMap[yearKey] || [];
-
-                            // [Fix] 查找逻辑升级：优先查新ID，查不到再查旧ID(兼容)
-                            let slotIdx = slots.indexOf(targetID);
-                            if (slotIdx === -1) slotIdx = slots.indexOf(regimeName);
-                            let totalSlots = slots.length;
-
-                            let left = 0, width = 100;
-
-                            if (slotIdx !== -1 && totalSlots > 0) {
-                                width = 100 / totalSlots;
-                                if (Core.state.isFlipped) {
-                                    left = (totalSlots - 1 - slotIdx) * width;
-                                } else {
-                                    left = slotIdx * width;
-                                }
-                            } else {
-                                // [Fix] 如果 layout 里没找到该政权 (数据不一致)
-                                // 改为追加到列末尾，而不是全宽覆盖
-                                const effectiveTotal = Math.max(totalSlots, 1) + 1; // 假装多一个槽位
-                                width = 100 / effectiveTotal;
-                                left = Core.state.isFlipped ? 0 : (effectiveTotal - 1) * width; // 放最后
-                                // 控制台警告（仅首次）
-                                if (!this._warnedMissingLayout) this._warnedMissingLayout = new Set();
-                                if (!this._warnedMissingLayout.has(targetID)) {
-                                    console.warn(`[Layout] 政权 "${regimeName}" 在 Layout 中未找到，已追加到列末尾`);
-                                    this._warnedMissingLayout.add(targetID);
-                                }
-                            }
-
-                            // 状态变更检测
-                            // [Fix] 使用 epsilon 比较浮点数
-                            const isChanged = Math.abs(left - currLeft) > 0.01 || Math.abs(width - currWidth) > 0.01;
-
-                            if (currLeft !== -1 && isChanged) {
-                                // 结束上一段
-                                pushSlice(slices, frag, currStart, y, currLeft, currWidth, colIdx);
-                                currStart = y;
-                            }
-
-                            if (currLeft === -1 || isChanged) {
-                                currLeft = left;
-                                currWidth = width;
-                            }
-                        }
-
-                        // 结束最后一段
-                        if (currLeft !== -1) {
-                            pushSlice(slices, frag, currStart, end, currLeft, currWidth, colIdx);
-                        }
-                    });
+                    // 3. (Fallback) 没有数据时返回空
+                    console.warn('[Layout] No sliceData found for region ' + regionId);
+                    return slices;
 
                     function pushSlice(outArr, originalFrag, s, e, l, w, cIdx) {
                         if (s >= e) return;
@@ -2365,7 +2218,7 @@
                         el.__data__ = { group: slice.group, style: slice.style, fragment: slice };
 
                         el.onmouseenter = () => {
-                            if (!Core.state.focusedGroupId) {
+                            if (!Core.state.selectedRegimeId) {
                                 document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.add('group-hovered'));
                                 if (Core.state.features.connections) Core.render.drawConnections(slice.group, '#fff');
                                 // [New] Highlight Header based on this block's region
@@ -2373,7 +2226,7 @@
                             }
                         };
                         el.onmouseleave = () => {
-                            if (!Core.state.focusedGroupId) {
+                            if (!Core.state.selectedRegimeId) {
                                 document.querySelectorAll('.' + slice.groupId).forEach(b => b.classList.remove('group-hovered'));
                                 document.getElementById('connections-layer').innerHTML = '';
                                 // [New] Clear Header Highlight
@@ -2386,6 +2239,17 @@
                     document.getElementById('blocks-layer').appendChild(blocksFrag);
 
                     Core.render.drawLabels(colCount);
+
+                    // [Fix] Redrawing destroys all DOM elements, so we MUST restore specific focus styles if active
+                    // This handles cases where resize/display-change triggers redraw during a jump animation
+                    if (Core.state.selectedRegimeId) {
+                        // Use setTimeout to ensure DOM is fully ready
+                        setTimeout(() => {
+                            if (Core.ui && Core.ui.setFocus) {
+                                Core.ui.setFocus(Core.state.selectedRegimeId);
+                            }
+                        }, 0);
+                    }
                 },
 
                 setupInteractions: function (renderArea, colCount) {
@@ -2396,8 +2260,15 @@
                             e.stopPropagation();
                             let d = clickedBlock.__data__;
                             Core.state.lastClickedGeoCode = d.fragment.geoCode;
-                            Core.ui.setFocus(d.group.groupId);
+                            Core.ui.setFocus(d.group.regimeId); // [Refactor] 传递 group.regimeId
                             Core.ui.showDetails(d.group, d.style);
+
+                            // [Sync] 点击政权时，向父级上报状态变更
+                            Core.updateParentState({
+                                selectedRegimeId: d.group.regimeId,
+                                year: window.getCenterYear ? window.getCenterYear() : undefined
+                            });
+
                             return;
                         }
                         if (!e.target.closest('.era-label')) Core.ui.clearFocus();
@@ -2455,7 +2326,7 @@
                             label.style.lineHeight = '1'; // 紧凑行高
 
                             if (layout.type === 'H') label.style.whiteSpace = 'nowrap';
-                            if (Core.state.focusedGroupId === group.groupId) label.classList.add('is-focused');
+                            if (Core.state.selectedRegimeId === group.regimeId) label.classList.add('is-focused'); // [Refactor] 使用 group.regimeId 比较
 
                             labelsFrag.appendChild(label);
                         }
@@ -2495,7 +2366,7 @@
                             };
                             dot.onclick = (e) => {
                                 e.stopPropagation();
-                                Core.ui.setFocus(group.groupId);
+                                Core.ui.setFocus(group.regimeId); // [Refactor] 传递 group.regimeId
                                 Core.ui.showDetails(group, Core.getStyle(group));
                             };
                             labelsFrag.appendChild(dot);
@@ -2562,22 +2433,38 @@
                     document.getElementById('editor-panel').classList.remove('panel-open');
                     Core.ui.clearFocus();
                 },
-                setFocus: function (groupId) {
-                    if (Core.state.focusedGroupId === groupId) { Core.ui.clearFocus(); return; }
-                    Core.state.focusedGroupId = groupId;
+                // [Refactor] setFocus 现在接受 group.regimeId (Name|Code 格式)
+                // 内部通过 id 查找 group，再用 group.groupId (hash) 操作 DOM
+                setFocus: function (regimeId) {
+                    // [Refactor] setFocus 应为幂等操作，仅负责设置焦点，不负责反转。
+                    // 原有的 toggle 逻辑被移除，防止 STATE_SYNC 预设 ID 后导致此处判定为"重复点击"而误关闭。
+
+                    // 查找对应的 group 对象
+                    const group = Core.state.regimeGroups.find(g => g.regimeId === regimeId);
+                    if (!group) {
+                        console.warn('[setFocus] Regime not found:', regimeId);
+                        return;
+                    }
+
+                    // 存储逻辑 ID (Name|Code)
+                    Core.state.selectedRegimeId = regimeId;
+
+                    // DOM 操作使用 CSS 安全的 groupId (hash)
+                    const cssClass = group.groupId;
                     document.body.classList.add('mode-focus');
                     document.querySelectorAll('.group-hovered').forEach(el => el.classList.remove('group-hovered'));
                     document.querySelectorAll('.is-focused').forEach(el => el.classList.remove('is-focused'));
-                    document.querySelectorAll('.' + groupId).forEach(el => el.classList.add('is-focused'));
+                    document.querySelectorAll('.' + cssClass).forEach(el => el.classList.add('is-focused'));
 
-                    const group = Core.state.regimeGroups.find(g => g.groupId === groupId);
-                    if (group) Core.render.drawConnections(group, '#fff');
-
-                    // [Fix] Remove clone logic. CSS z-index (2500) is sufficient now that header is 4000.
-                    // This fixes the "floating ghost label" bug on scroll.
+                    Core.render.drawConnections(group, '#fff');
                 },
                 clearFocus: function () {
-                    Core.state.focusedGroupId = null;
+                    // [Sync] 只有在确实有选中的情况下才通知，避免冗余
+                    if (Core.state.selectedRegimeId !== null) {
+                        Core.updateParentState({ selectedRegimeId: null });
+                    }
+
+                    Core.state.selectedRegimeId = null;
                     document.body.classList.remove('mode-focus');
 
                     // Restore original styles
@@ -2689,11 +2576,15 @@
                     const targetGeo = Core.state.lastClickedGeoCode || (sortedGeoCodes.length > 0 ? sortedGeoCodes[0] : null);
 
                     // 构建跳转参数对象
+                    // [Fix] 使用当前视口年份，而非政权起始年份，保持时间线一致性
+                    const currentYear = window.getCenterYear ? window.getCenterYear() : group.minStart + 1;
+
                     const jumpPayload = {
                         target: 'map',
                         params: {
                             region: targetGeo,
-                            year: group.minStart + 1,
+                            // [Fix] 移除显式 year 参数，让 index.html 的 switchView 自动使用当前视图年份保持连贯性
+                            // year: currentYear, 
                             regime: group.name
                         }
                     };
@@ -2752,6 +2643,13 @@
                         div.innerHTML = `<span>${g.name}</span> <span style="font-size:9px; color:var(--slate-500); margin-left:0.5rem">(${g.minStart})</span>`;
                         div.onclick = () => {
                             this.jumpToRegime(g);
+
+                            // [Sync] 搜索选中时，向父级上报状态变更
+                            Core.updateParentState({
+                                selectedRegimeId: g.regimeId,
+                                year: window.getCenterYear ? window.getCenterYear() : undefined
+                            });
+
                             document.getElementById('search-input').value = '';
                             container.style.display = 'none';
                             document.querySelectorAll('.era-dimmed').forEach(el => el.classList.remove('era-dimmed'));
@@ -2760,15 +2658,62 @@
                     });
                     container.style.display = 'block';
                 },
-                jumpToRegime: function (group) {
-                    const targetY = (group.minStart - APP_CONFIG.minYear) * Core.state.zoom;
+                jumpToRegime: function (group, targetYearOrSkip = false) {
                     const renderArea = document.getElementById('render-area');
+                    const mainContent = document.getElementById('main-content');
+
                     const colWidth = renderArea.scrollWidth / Core.state.regions.length;
                     const targetX = (group.centerCol + 0.5) * colWidth;
 
-                    document.getElementById('main-content').scrollTo({ top: targetY - 100, left: targetX - window.innerWidth / 2, behavior: 'smooth' });
+                    // Determine Target Y
+                    let targetY;
+                    if (typeof targetYearOrSkip === 'number') {
+                        // Priority 1: Specified Year (from handleJump)
+                        targetY = (targetYearOrSkip - APP_CONFIG.minYear) * Core.state.zoom;
+                    } else if (targetYearOrSkip === true) {
+                        // Priority 2: Keep Current Y (Skip)
+                        targetY = undefined;
+                    } else {
+                        // Priority 3: Smart Default
+                        // 如果当前年份 (Core.state.year) 在政权存续范围内，则维持在该年份
+                        // 否则（如从其他时不相关的页面跳转），才回滚到政权起始年份
+                        const currentYear = Core.state.year;
+                        if (currentYear >= group.minStart && currentYear <= group.maxEnd) {
+                            console.log(`[Jump] Keeping year ${currentYear} (within regime range)`);
+                            targetY = (currentYear - APP_CONFIG.minYear) * Core.state.zoom;
+                        } else {
+                            // Default to Regime Start
+                            targetY = (group.minStart - APP_CONFIG.minYear) * Core.state.zoom;
+                        }
+                    }
+
+                    if (targetY === undefined) {
+                        // 只做水平滚动，不干扰垂直滚动
+                        // 直接设置 scrollLeft 确保不影响 scrollTop
+                        const targetLeft = Math.max(0, targetX - window.innerWidth / 2);
+                        mainContent.scrollLeft = targetLeft;
+                    } else {
+                        // 同时滚动到政权位置（水平+垂直）
+                        const targetTop = targetY - (window.innerHeight / 2);
+                        // [Optimize] 如果距离过远 (>5000px)，使用瞬移以防止冗长的滚动动画（如从顶部初始化时）
+                        // 否则使用平滑滚动提供更好的体验
+                        const dist = Math.abs(mainContent.scrollTop - targetTop);
+                        const behavior = dist > 5000 ? 'auto' : 'smooth';
+
+                        // [Sync Protection] 标记为程序化滚动，防止 _setupScrollSync 在滚动过程中上报中间状态
+                        window._isProgrammaticScroll = true;
+
+                        mainContent.scrollTo({
+                            left: targetX - window.innerWidth / 2,
+                            top: targetTop,
+                            behavior: behavior
+                        });
+
+                        setTimeout(() => { window._isProgrammaticScroll = false; }, 1000);
+                    }
+                    // [Clean] 移除了 programmaticScroll 保护逻辑，因为不再需要防止 conflict
                     setTimeout(() => {
-                        Core.ui.setFocus(group.groupId);
+                        Core.ui.setFocus(group.regimeId); // [Refactor] 传递 group.regimeId
                         Core.ui.showDetails(group, Core.getStyle(group));
                     }, 500);
                 }
@@ -2795,10 +2740,19 @@
             return Math.round(year);
         };
 
+        window._pendingScrollYear = null;
+
         window.scrollToYear = function (year) {
             if (typeof year !== 'number' || isNaN(year)) return;
             const el = document.getElementById('main-content');
             if (!el || !Core || !Core.state) return;
+
+            // [Fix] 如果数据尚未Ready（高度可能不对），暂存请求
+            if (!Core.state.dataReady || el.scrollHeight < 1000) {
+                console.log(`[Panorama] Pending scroll to ${year} until ready`);
+                window._pendingScrollYear = year;
+                return;
+            }
 
             const zoom = Core.state.zoom || 1.5;
             const targetPx = (year - APP_CONFIG.minYear) * zoom;

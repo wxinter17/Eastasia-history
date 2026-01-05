@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史交互地图系统 (v5.03)</title>
+    <title>东亚历史交互地图系统 (v5.04)</title>
 
     <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
     <script>
-        window.APP_VERSION = '2026.01.05.001';
+        window.APP_VERSION = '2026.01.06.001';
         window.APP_CONFIG = {
             // 缓存版本检查
             checkCache: function () {
@@ -1030,8 +1030,7 @@
                 // === 核心全局状态（单一数据源）===
                 currentView: 'map',          // map | panorama
                 year: -2070,                 // 当前时间点（默认：夏朝开始）
-                selectedRegime: null,        // 当前选中政权ID
-                locked: false,               // 是否锁定政权
+                selectedRegimeId: null,      // 当前选中政权ID (格式: Name|Code)
                 focusMode: false,            // AI面板是否激活
 
                 // === 系统状态 ===
@@ -1109,9 +1108,8 @@
 
                 // 只同步核心状态
                 if (this.state.year !== -2070) params.set('year', this.state.year);
-                if (this.state.selectedRegime) params.set('regime', this.state.selectedRegime);
+                if (this.state.selectedRegimeId) params.set('regime', this.state.selectedRegimeId);
                 if (this.state.currentView !== 'map') params.set('view', this.state.currentView);
-                if (this.state.locked) params.set('locked', '1');
 
                 const queryString = params.toString();
                 const newURL = queryString ? '?' + queryString : window.location.pathname;
@@ -1131,9 +1129,8 @@
                     const year = parseInt(params.get('year'));
                     if (!isNaN(year)) patch.year = year;
                 }
-                if (params.has('regime')) patch.selectedRegime = params.get('regime');
+                if (params.has('regime')) patch.selectedRegimeId = params.get('regime');
                 if (params.has('view')) patch.currentView = params.get('view');
-                if (params.has('locked')) patch.locked = true;
 
                 if (Object.keys(patch).length > 0) {
                     this.setState(patch, { skipURL: true }); // 避免循环
@@ -1459,7 +1456,7 @@
                     };
                     req.onsuccess = (e) => {
                         const db = e.target.result;
-                        if (!db.objectStoreNames.contains("layouts")) { if (callback) callback(); return; }
+                        if (!db.objectStoreNames.contains("layouts")) { tryFallback(); return; }
                         const tx = db.transaction("layouts", "readonly");
                         const store = tx.objectStore("layouts");
                         const getReq = store.get("current");
@@ -1470,24 +1467,41 @@
                                 this.state.layoutData = rec.data;
                                 console.log("✅ Layout loaded from DB");
 
-                                // 2. 校验 Hash (仅当提供了当前Hash时)
+                                // 2. 校验 Hash
                                 if (currentCsvHash && rec.data.dataHash && rec.data.dataHash !== currentCsvHash) {
                                     this.showDesyncAlert();
                                 }
-                            }
-                            // 无论成功与否，只要 DB 操作结束，就执行回调（用于触发 processData）
-                            if (callback) callback();
-
-                            // 3. 如果是异步更新且数据已就绪，再次广播
-                            if (!callback && this.state.dataReady) {
-                                this.broadcastData();
+                                if (callback) callback();
+                            } else {
+                                // DB 为空，尝试 Fallback
+                                tryFallback();
                             }
                         };
-                        getReq.onerror = () => { if (callback) callback(); };
+                        getReq.onerror = () => tryFallback();
                     };
                 } catch (e) {
                     console.warn("IndexDB check failed", e);
-                    if (callback) callback();
+                    tryFallback();
+                }
+
+                // 嵌套定义的 Fallback 函数
+                const _this = this;
+                function tryFallback() {
+                    console.log("[Layout] DB miss, trying layout.json...");
+                    fetch('layout.json?' + Date.now()) // 避免 HTTP 缓存
+                        .then(res => {
+                            if (!res.ok) throw new Error("404");
+                            return res.json();
+                        })
+                        .then(data => {
+                            _this.state.layoutData = data;
+                            console.log("✅ Layout loaded from JSON file");
+                            if (callback) callback();
+                        })
+                        .catch(err => {
+                            console.warn("❌ Layout load failed completely:", err);
+                            if (callback) callback();
+                        });
                 }
             },
 
@@ -1555,6 +1569,9 @@
 
                 // [New] CSV-Layout 一致性校验
                 this.checkLayoutConsistency(data);
+
+                // [New] 预计算切片数据（供地图页和全景页共用）
+                this.computeSliceData(data);
 
                 const loader = document.getElementById('global-loader');
                 if (loader) {
@@ -1637,6 +1654,89 @@
                 };
             },
 
+            // [Standard] 全局统一的政权 ID 生成规则
+            getRegimeId: function (name, code) {
+                return (name || '').trim() + "|" + (code || name || '').trim();
+            },
+
+            /**
+             * [New] 预计算切片数据 - 统一为地图页和全景页提供一致的布局信息
+             */
+            computeSliceData: function (rawData) {
+                const sliceData = {};
+                const layoutData = this.state.layoutData;
+                if (!layoutData || !layoutData.layout) {
+                    // 允许在无布局时运行，但数据可能不完整
+                }
+
+                const regimesByGeo = {};
+                const PRESENT_YEAR = 2025;
+
+                if (rawData) {
+                    rawData.forEach(r => {
+                        const geoCode = r.geo_code; // [Fix] 使用 CSV 原始字段名 (snake_case)
+                        if (!geoCode) return;
+                        if (!regimesByGeo[geoCode]) regimesByGeo[geoCode] = [];
+                        regimesByGeo[geoCode].push(r);
+                    });
+                }
+
+                for (const geoCode in regimesByGeo) {
+                    const regimes = regimesByGeo[geoCode];
+                    let timePoints = new Set();
+
+                    regimes.forEach(r => {
+                        // [Fix] 使用 CSV 原始字段名并解析
+                        const start = parseInt(r.start_year);
+                        let end = (r.end_year === 'present' || r.end_year === '') ? PRESENT_YEAR : parseInt(r.end_year);
+                        if (!isNaN(start)) timePoints.add(start);
+                        if (!isNaN(end)) timePoints.add(end);
+                    });
+
+                    const sortedPoints = Array.from(timePoints).sort((a, b) => a - b);
+
+                    const regionSlices = [];
+                    for (let i = 0; i < sortedPoints.length - 1; i++) {
+                        const t1 = sortedPoints[i];
+                        const t2 = sortedPoints[i + 1];
+
+                        const activeRegimes = regimes.filter(r => {
+                            const start = parseInt(r.start_year);
+                            let end = (r.end_year === 'present' || r.end_year === '') ? PRESENT_YEAR : parseInt(r.end_year);
+                            return start < t2 && end > t1;
+                        });
+
+                        if (activeRegimes.length === 0) continue;
+
+                        const layoutMapForYear = layoutData && layoutData.layout && layoutData.layout[geoCode] ? layoutData.layout[geoCode][t1] : null;
+
+                        activeRegimes.sort((a, b) => {
+                            const idA = this.getRegimeId(a.regime_name || a.name, a.regime_code || a.name);
+                            const idB = this.getRegimeId(b.regime_name || b.name, b.regime_code || b.name);
+
+                            if (layoutMapForYear) {
+                                const indexA = layoutMapForYear.indexOf(idA);
+                                const indexB = layoutMapForYear.indexOf(idB);
+                                if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                                if (indexA !== -1) return -1;
+                                if (indexB !== -1) return 1;
+                            }
+                            // Fallback: 按起始年份排序
+                            return parseInt(a.start_year) - parseInt(b.start_year);
+                        });
+
+                        regionSlices.push({
+                            start: t1,
+                            end: t2,
+                            slots: activeRegimes.map(r => this.getRegimeId(r.regime_name || r.name, r.regime_code || r.name))
+                        });
+                    }
+                    sliceData[geoCode] = regionSlices;
+                }
+                this.state.sliceData = sliceData;
+                console.log("[computeSliceData] Slice data computed. Regions:", Object.keys(sliceData).length);
+            },
+
             broadcastData: function () {
                 if (!this.state.dataReady) return;
                 const message = {
@@ -1644,7 +1744,8 @@
                     payload: {
                         data: this.state.rawData,
                         sharedCSS: SHARED_CSS_STYLES,
-                        layout: this.state.layoutData, // [Fix] 传递 Layout 数据
+                        layout: this.state.layoutData,
+                        sliceData: this.state.sliceData,
                         config: { apiKey: this.state.apiKey }
                     }
                 };
@@ -1790,6 +1891,10 @@
             switchView: function (view) {
                 if (view === this.state.currentView) return;
 
+                // [Fix] 不再从 iframe 动态获取年份（会导致竞态条件，获取到滚动中的错误位置）
+                // 直接使用 this.state.year，它已由各页面的滚动同步逻辑正确维护
+                console.log('[switchView] Using stored year:', this.state.year);
+
                 // 使用 setState 触发视图切换（单向数据流）
                 this.setState({ currentView: view });
             },
@@ -1835,10 +1940,11 @@
 
                     if (this.state.dataReady) this.broadcastData();
                 } else if (type === 'REQUEST_SWITCH') {
+                    // [Fix] 如果请求包含参数（如从全景页指定区域跳转），先更新 State
+                    if (payload.params && payload.params.region) {
+                        this.setState({ region: payload.params.region });
+                    }
                     this.switchView(payload.target);
-                    setTimeout(() => {
-                        this.broadcast('CMD_JUMP', payload.params);
-                    }, 100);
                 }
             },
 
@@ -1880,18 +1986,18 @@
                 document.getElementById('global-search').value = regimeName;
                 document.getElementById('search-suggestions').style.display = 'none';
 
+                if (!this.state.rawData) return;
                 const target = this.state.rawData.find(r => (r.regime_name === regimeName || r.name === regimeName));
+
                 if (target) {
-                    if (this.state.currentView === 'panorama') {
-                        this.broadcast('CMD_JUMP', { regime: regimeName, year: target.start_year });
-                    } else {
-                        this.broadcast('CMD_JUMP', {
-                            regime: regimeName,
-                            region: target.geo_code,
-                            year: target.start_year,
-                            showDetails: true
-                        });
-                    }
+                    // [Refactor] Use simple State Update instead of CMD_JUMP
+                    const update = {
+                        year: parseInt(target.start_year),
+                        region: target.geo_code,
+                        // Construct unified ID: Name|Code (Must match panorama/map logic)
+                        selectedRegimeId: `${target.regime_name}|${target.regime_code}`
+                    };
+                    this.setState(update);
                 }
             },
 
@@ -1935,16 +2041,29 @@
 
             handleUrlParams: function () {
                 const p = new URLSearchParams(window.location.search);
-                // 检查是否有 year 或 regime 参数
-                if (p.get('year') || p.get('regime')) {
-                    // 延迟一点广播，确保子页面已加载
-                    setTimeout(() => {
-                        this.broadcast('CMD_JUMP', {
-                            year: p.get('year'),
-                            region: p.get('region'),
-                            regime: p.get('regime')
-                        });
-                    }, 1000);
+                const update = {};
+
+                const year = p.get('year');
+                if (year) update.year = parseInt(year);
+
+                const region = p.get('region');
+                if (region) update.region = region;
+
+                // Handle 'regime' param by looking up ID
+                const regime = p.get('regime');
+                if (regime && this.state.rawData) {
+                    const target = this.state.rawData.find(r => r.regime_name === regime || r.name === regime);
+                    if (target) {
+                        update.selectedRegimeId = `${target.regime_name}|${target.regime_code}`;
+                        // If year/region missing, fill from target
+                        if (!update.year) update.year = parseInt(target.start_year);
+                        if (!update.region) update.region = target.geo_code;
+                    }
+                }
+
+                if (Object.keys(update).length > 0) {
+                    // Update state. Child frames will receive STATE_SYNC when they are ready.
+                    this.setState(update);
                 }
             },
 

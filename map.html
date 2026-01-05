@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>History Map View (v16.02)</title>
+    <title>History Map View (v16.03)</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.05.001';
+        window.APP_VERSION = '2026.01.06.001';
     </script>
 
     <script>
@@ -1164,7 +1164,7 @@
             timelineMaxYear: 2024,
             currentYear: -2070, // 初始从夏朝开始
             pendingSwitchRegion: null,
-            lockedRegimeId: null
+            selectedRegimeId: null
         };
 
         const App = {
@@ -1189,7 +1189,7 @@
                 window._initTime = Date.now(); // [New] 记录初始化时间
                 MapCtrl.init(); // 初始化 Leaflet
                 // [新增] 启动时尝试同步布局库
-                this.loadLayoutFromDB();
+
                 // 【新增】必须在这里显式调用渲染，否则地图上只有底图，没有色块
                 MapCtrl.render();
 
@@ -1209,10 +1209,9 @@
 
                     // 1. 初始化数据与样式
                     if (type === 'INIT_DATA') {
-                        const { data, sharedCSS, layout, config } = payload;
+                        const { data, sharedCSS, layout, sliceData, config } = payload;
 
                         // [关键修复] 注入父级发来的 CSS (解决 texture-V/J 无效问题)
-                        // 如果没有这一步，地图上的虚线和网格纹理将无法显示
                         if (sharedCSS) {
                             let styleEl = document.getElementById('shared-styles');
                             if (!styleEl) {
@@ -1223,10 +1222,11 @@
                             styleEl.innerHTML = sharedCSS;
                         }
 
-                        // [New] 保存布局数据，用于瀑布图政权排序
-                        if (layout) {
-                            State.layoutData = layout;
-                            console.log('[Map] Layout data received:', layout.version || 'unknown');
+                        // [Fix] 保存布局和切片数据
+                        if (layout) State.layoutData = layout;
+                        if (sliceData) {
+                            State.sliceData = sliceData;
+                            console.log('[Map] Slice data received');
                         }
 
                         // 保存 API Key
@@ -1249,7 +1249,10 @@
 
                             // 渲染时间轴/瀑布图
                             if (typeof TimelineCtrl !== 'undefined' && TimelineCtrl.render) {
-                                TimelineCtrl.render(Data.regimes);
+                                // [Fix] 仅当已有选中区域时才渲染 Timeline，绝对不要渲染 Data.regimes (全局数据)
+                                if (State.currentRegion && State.dataMap && State.dataMap[State.currentRegion.code]) {
+                                    TimelineCtrl.render(State.dataMap[State.currentRegion.code].regimes);
+                                }
                             }
                         }
                     }
@@ -1267,29 +1270,7 @@
                         App.safeExec(App.resetAll);
                     }
 
-                    // 5. 跳转指令 (核心交互)
-                    if (type === 'CMD_JUMP') {
-                        // 调用原有的处理逻辑
-                        if (this.handleJump) this.handleJump(payload);
 
-                        // [补充] 显式更新时间轴和高亮 (防止 handleJump 覆盖不全)
-                        if (payload.year && MapCtrl.updateTimeline) MapCtrl.updateTimeline(payload.year);
-                        if (payload.regime && UICtrl.highlightRegime) UICtrl.highlightRegime(payload.regime);
-
-                        // 处理搜索跳转带来的详情展示
-                        if (payload.showDetails && payload.region) {
-                            setTimeout(() => {
-                                const layer = MapCtrl.findLayerByGeoCode(payload.region);
-                                if (layer) {
-                                    MapCtrl.map.flyTo(layer.getBounds().getCenter(), 6);
-                                    // 模拟点击触发详情，注意参数传递
-                                    if (MapCtrl.handleRegionClick) {
-                                        MapCtrl.handleRegionClick({ code: payload.region, name: '搜索结果' }, layer);
-                                    }
-                                }
-                            }, 500);
-                        }
-                    }
 
                     // 6. 纯滚动同步 (不选中任何政权，只跳转时间)
                     if (type === 'CMD_SCROLL_TO_YEAR') {
@@ -1362,17 +1343,74 @@
                             }
                         }
 
-                        // 3. 同步锁定状态
-                        if (appState.locked !== undefined) {
-                            // 锁定状态的UI反馈（如果有相关UI）
-                            console.log('[Map] Regime locked:', appState.locked);
+                        // 3. 同步区域 (New)
+                        if (appState.region) {
+                            const rCode = parseInt(appState.region);
+                            if (State.currentRegion && State.currentRegion.code !== rCode) {
+                                if (State.layers && State.layers[rCode]) {
+                                    // Reset old style
+                                    if (State.selectedLayer) {
+                                        const oldCode = State.currentRegion.code;
+                                        if (State.layers[oldCode]) {
+                                            State.layers[oldCode].setStyle({ weight: 1, color: MapCtrl.getColor(oldCode), opacity: 0.9, fillOpacity: 0.4 });
+                                        }
+                                    }
+
+                                    // Set new region
+                                    State.selectedLayer = State.layers[rCode];
+
+                                    // [Fix] 正确获取地区名称 (挂载在 itemData 上而非 feature)
+                                    const layerItem = State.layers[rCode].itemData || {};
+                                    State.currentRegion = {
+                                        code: rCode,
+                                        name: layerItem.name || 'Unknown',
+                                        desc: layerItem.desc || ''
+                                    };
+
+                                    // Trigger update
+                                    UICtrl.openDetailPanel(State.currentYear);
+                                    MapCtrl.updateHighlight(State.currentYear);
+                                }
+                            }
+                        }
+
+                        // 4. 同步选中的政权 (Lock)
+                        if (appState.selectedRegimeId !== undefined) {
+                            // [Fix] 状态变更时先清理旧模态框，防止残留
+                            const oldModal = document.getElementById('regime-modal');
+                            if (oldModal) oldModal.classList.remove('show');
+
+                            if (appState.selectedRegimeId) {
+                                State.selectedRegimeId = appState.selectedRegimeId;
+                                // 刷新 Timeline 以显示锁定状态 (必须使用当前区域的数据！)
+                                const currentCode = State.currentRegion ? State.currentRegion.code : null;
+                                const currentData = (currentCode && State.dataMap[currentCode]) ? State.dataMap[currentCode].regimes : [];
+
+                                if (typeof TimelineCtrl !== 'undefined') {
+                                    TimelineCtrl.render(currentData, State.currentYear);
+                                }
+                                // 高亮政权
+                                const [rName, rCode] = appState.selectedRegimeId.split('|');
+                                if (rName && UICtrl.highlightRegime) UICtrl.highlightRegime(rName);
+
+                            } else {
+                                State.selectedRegimeId = null;
+                                const currentCode = State.currentRegion ? State.currentRegion.code : null;
+                                const currentData = (currentCode && State.dataMap[currentCode]) ? State.dataMap[currentCode].regimes : [];
+
+                                if (typeof TimelineCtrl !== 'undefined') {
+                                    TimelineCtrl.render(currentData, State.currentYear);
+                                }
+                                if (UICtrl.clearHighlight) UICtrl.clearHighlight();
+                            }
+                            console.log('[Map] Regime locked:', appState.selectedRegimeId);
                         }
 
                         // 调试日志
                         console.log('[Map] STATE_SYNC received:', {
                             year: appState.year,
                             selectedRegime: appState.selectedRegime,
-                            locked: appState.locked
+                            selectedRegimeId: appState.selectedRegimeId
                         });
                     }
                 });
@@ -1408,39 +1446,7 @@
 
             // [新增] 加载布局数据库 (实现与 LayoutOptimizer 的数据互通)
             // [New] Unify DB Connection
-            loadLayoutFromDB: function () {
-                return new Promise((resolve) => {
-                    if (!window.indexedDB) { resolve(false); return; }
-                    // [Fix] Connect to the Unified DB
-                    const request = indexedDB.open("EastAsiaHistoryDB");
-                    request.onsuccess = (event) => {
-                        const db = event.target.result;
-                        if (!db.objectStoreNames.contains("layouts")) { resolve(false); return; }
-                        const transaction = db.transaction(["layouts"], "readonly");
-                        const objectStore = transaction.objectStore("layouts");
-                        const req = objectStore.get("current");
-                        req.onsuccess = (e) => {
-                            const res = e.target.result;
-                            if (res && res.data && res.data.colOrder) {
-                                // Sync Column Order to RankMap (GeoID -> Index)
-                                State.rankMap = {};
-                                res.data.colOrder.forEach((geoId, index) => {
-                                    State.rankMap[geoId] = index;
-                                });
-                                Logger.info(`✅ 布局同步成功: Has ${res.data.colOrder.length} regions`);
-                                resolve(true);
-                            } else {
-                                resolve(false);
-                            }
-                        };
-                        req.onerror = () => resolve(false);
-                    };
-                    request.onerror = (e) => {
-                        console.warn("DB Open Failed", e);
-                        resolve(false);
-                    };
-                });
-            },
+
 
             // --- [修复] 地图页专用复位函数 ---
             resetAll: function () {
@@ -1451,7 +1457,7 @@
                 State.currentRegion = null;
                 State.selectedLayer = null;
                 State.pendingSwitchRegion = null;
-                State.lockedRegimeId = null;
+                State.selectedRegimeId = null;
                 State.currentRegimeData = null;
                 State.isEditMode = false;
                 State.isDelMode = false;
@@ -1607,6 +1613,14 @@
                 UICtrl.openDetailPanel(State.currentYear);
                 MapCtrl.updateHighlight(State.currentYear);
                 UICtrl.showToast(`已跳转至 ${target.name}`);
+
+                // [Fix] 切换区域后立即通知父级，更新全局 Region 状态
+                if (window.parent) {
+                    window.parent.postMessage({
+                        type: 'STATE_UPDATE_REQUEST',
+                        payload: { region: String(target.code) }
+                    }, window.location.origin);
+                }
             },
 
 
@@ -1636,9 +1650,10 @@
                         suzerainType: r.suzerain_type,
                         tier: parseInt(r.regime_tier) || 3,
                         desc: r.desc,
-                        geo_code: c, // [新增] 补充地理编码供筛选使用
-                        // [Fix] ID 策略：Name + Code (与 LayoutOptimizer 统一，确保 Ranking 查找命中)
-                        _id: (r.regime_name || r.name) + "-" + (r.regime_code || r.name)
+                        geo_code: c, // Numeric for internal map logic
+                        geoCode: String(r.geo_code || c), // [New] String for cross-page sync (Panorama expects string)
+                        // [Unified] 政权唯一标识符 (格式: Name|Code)
+                        regimeId: (r.regime_name || r.name) + "|" + (r.regime_code || r.name)
                     };
 
                     State.dataMap[c].regimes.push(regimeItem);
@@ -1947,16 +1962,16 @@
                     return best;
                 };
 
-                if (State.lockedRegimeId) {
+                if (State.selectedRegimeId) {
                     const allRegimesFlat = Object.values(State.dataMap).flatMap(d => d.regimes);
-                    let currentLocked = allRegimesFlat.find(r => r._id === State.lockedRegimeId);
+                    let currentLocked = allRegimesFlat.find(r => r.regimeId === State.selectedRegimeId);
 
                     // [Fix] 强制解锁逻辑 + 冷却期保护
                     // 如果在用户刚锁定后的500ms内，不执行自动解锁
                     const lockCooldown = Date.now() - (State._lockTime || 0) < 500;
 
                     if (!currentLocked || (!lockCooldown && (year < currentLocked._start || year > currentLocked._end))) {
-                        State.lockedRegimeId = null;
+                        State.selectedRegimeId = null;
                         target = findSuccessor(currentLocked, actives);
                     } else {
                         target = currentLocked;
@@ -1964,7 +1979,7 @@
                 } else {
                     // [动态模式]
                     // 1. 惯性保持：如果上一次选中的 target 还在 actives 里，就保持它
-                    if (State.lastActiveRegime && actives.find(r => r._id === State.lastActiveRegime._id)) {
+                    if (State.lastActiveRegime && actives.find(r => r.regimeId === State.lastActiveRegime.regimeId)) {
                         target = State.lastActiveRegime;
                     } else {
                         // 2. 也是用寻找继承者逻辑
@@ -2010,13 +2025,13 @@
                         if (isTargetHere) {
                             if (!isCoRuling) {
                                 layer.setStyle({ weight: 2, color: '#f1c40f', opacity: 0.9, fillOpacity: 0.6, fillColor: '#f1c40f', dashArray: null });
-                                if (State.lockedRegimeId && layer._path) {
+                                if (State.selectedRegimeId && layer._path) {
                                     layer._path.classList.add('glow-effect');
                                     layer._path.classList.remove('conflict-effect');
                                 }
                             } else {
                                 layer.setStyle({ weight: 2, color: '#d35400', opacity: 0.9, fillOpacity: 0.6, fillColor: '#e67e22', dashArray: '6, 6' });
-                                if (State.lockedRegimeId && layer._path) {
+                                if (State.selectedRegimeId && layer._path) {
                                     layer._path.classList.remove('glow-effect');
                                     layer._path.classList.add('conflict-effect');
                                 }
@@ -2247,7 +2262,7 @@
             // [Phase 1] 纯计算布局，生成 Layout Data
             calculateLayout(regimes) {
                 this.computedLayouts = [];
-                if (!regimes || !Array.isArray(regimes)) return;
+                if (!regimes || !Array.isArray(regimes) || regimes.length === 0) return;
 
                 let starts = regimes.map(r => parseInt(r.startStr)).filter(n => !isNaN(n));
                 let ends = regimes.map(r => r.endStr === 'present' ? 2024 : parseInt(r.endStr)).filter(n => !isNaN(n));
@@ -2301,110 +2316,85 @@
                     r._globalLane = assignedLane;
                 });
 
-                // 时间切片计算
-                let timePoints = new Set();
-                regimes.forEach(r => { timePoints.add(r._start); timePoints.add(r._end); });
-                const sortedPoints = Array.from(timePoints).sort((a, b) => a - b);
+                // 时间切片计算（优先使用预计算的 SliceData）
+                const regionId = regimes[0]?.geoCode || regimes[0]?.geo_code;
+                const precomputedSlices = (State.sliceData && regionId) ? State.sliceData[regionId] : null;
 
-                for (let i = 0; i < sortedPoints.length - 1; i++) {
-                    const t1 = sortedPoints[i];
-                    const t2 = sortedPoints[i + 1];
-                    const active = regimes.filter(r => r._start < t2 && r._end > t1);
-                    if (active.length === 0) continue;
+                if (precomputedSlices && precomputedSlices.length > 0) {
+                    console.log(`[Timeline] Using precomputed slices for region ${regionId}: ${precomputedSlices.length} slices`);
 
-                    // [核心修改] 使用 IndexedDB 布局数据来排序政权
-                    // 这样可以确保地图页瀑布图与全景图的政权顺序一致
-                    const regionId = active[0]?.geoCode || active[0]?.geo_code;
-                    const layoutMap = State.layoutData && State.layoutData.layout ? State.layoutData.layout[regionId] : null;
-                    const yearKey = String(t1);
-                    const slots = layoutMap ? (layoutMap[yearKey] || []) : [];
+                    precomputedSlices.forEach((slice, sIdx) => {
+                        const t1 = slice.start;
+                        const t2 = slice.end;
+                        const activeIds = slice.slots; // ["Name|Code", ...]
 
-                    active.sort((a, b) => {
-                        if (slots.length > 0) {
-                            // 使用 LayoutOptimizer 的格式: "政权名|政权代码"
-                            const idA = (a.name || '') + '|' + (a.regimeCode || a.name || '');
-                            const idB = (b.name || '') + '|' + (b.regimeCode || b.name || '');
+                        if (activeIds.length === 0) return;
 
-                            // 先查精确匹配，再查名称
-                            let rankA = slots.indexOf(idA);
-                            if (rankA === -1) rankA = slots.indexOf(a.name);
-                            let rankB = slots.indexOf(idB);
-                            if (rankB === -1) rankB = slots.indexOf(b.name);
+                        const count = activeIds.length;
+                        const unitWidth = 100 / count;
+                        const zIndexBase = 50000 - (sIdx * 100);
 
-                            // [Debug] 首次遇到后北条氏时输出调试信息
-                            if ((a.name === '后北条氏' || b.name === '后北条氏') && !this._debuggedHojo) {
-                                console.log('[Layout Debug] 后北条氏排序:', {
-                                    year: t1, regionId,
-                                    slots: slots.slice(0, 5),
-                                    idA, idB, rankA, rankB
-                                });
-                                this._debuggedHojo = true;
-                            }
+                        activeIds.forEach((idStr, idx) => {
+                            // 从 regimes 数组中找到对应政权对象
+                            // idStr 格式: "Name|Code"
+                            const [name, code] = idStr.split('|');
+                            // 查找匹配的 regime 对象
+                            // [Fix] ID 格式已统一 (Name|Code)，直接比较即可
+                            const r = regimes.find(item => item.regimeId === idStr) ||
+                                regimes.find(item => item.name === name || item.regime_name === name);
 
-                            // 如果都找到了，按布局顺序排序
-                            if (rankA !== -1 && rankB !== -1) {
-                                return rankA - rankB;
-                            }
-                            // 如果只有一个找到，找到的排前面
-                            if (rankA !== -1) return -1;
-                            if (rankB !== -1) return 1;
-                        }
-                        // 降级策略：按车道或时间排序
-                        return a._globalLane - b._globalLane;
-                    });
+                            if (!r) return; // 容错
 
-                    const count = active.length;
-                    const unitWidth = 100 / count;
-                    const zIndexBase = 50000 - (i * 100);
+                            const left = idx * unitWidth;
+                            const width = unitWidth;
+                            const topPx = (t1 - State.timelineMinYear) * CONFIG.pixelsPerYear;
+                            const actualHeight = Math.max((t2 - t1) * CONFIG.pixelsPerYear, 0);
+                            const bottomPx = topPx + actualHeight;
 
-                    active.forEach((r, idx) => {
-                        const left = idx * unitWidth;
-                        const width = unitWidth;
-                        const topPx = (t1 - State.timelineMinYear) * CONFIG.pixelsPerYear;
-                        const actualHeight = Math.max((t2 - t1) * CONFIG.pixelsPerYear, 0);
-                        const bottomPx = topPx + actualHeight;
+                            // 合并逻辑 (复用现有)
+                            let merged = false;
+                            for (let k = this.computedLayouts.length - 1; k >= 0; k--) {
+                                const last = this.computedLayouts[k];
+                                if (topPx - last.bottom > 100) break;
 
-                        // 合并逻辑 (基于数据)
-                        // 在 this.computedLayouts 中倒序查找
-                        let merged = false;
-                        for (let k = this.computedLayouts.length - 1; k >= 0; k--) {
-                            const last = this.computedLayouts[k];
-                            // 优化：如果 last.bottom 离 topPx 太远，直接停止搜索 (假设大致有序)
-                            if (topPx - last.bottom > 100) break;
-
-                            if (last.regimeId === r._id) {
-                                if (Math.abs(last.bottom - topPx) < 1.5) {
-                                    if (Math.abs(last.left - left) < 2.0 && Math.abs(last.width - width) < 2.0) {
-                                        last.height += actualHeight;
-                                        last.bottom = bottomPx;
-                                        merged = true;
-                                        break; // 找到即停
+                                if (last.regimeId === r.regimeId) {
+                                    if (Math.abs(last.bottom - topPx) < 1.5) {
+                                        if (Math.abs(last.left - left) < 2.0 && Math.abs(last.width - width) < 2.0) {
+                                            last.height += actualHeight;
+                                            last.bottom = bottomPx;
+                                            merged = true;
+                                            break;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        if (merged) return;
+                            if (merged) return;
 
-                        // 预计算 Style
-                        let style = { bg: '#666', border: 'rgba(0,0,0,0.1)', className: 'texture-N' };
-                        if (window.parent && window.parent.EastAsiaApp && window.parent.EastAsiaApp.getStyle) {
-                            style = window.parent.EastAsiaApp.getStyle(r.regimeCode, r.name, r.suzerainCode || r.suzerain, r.suzerainType);
-                        }
+                            // 预计算 Style
+                            let style = { bg: '#666', border: 'rgba(0,0,0,0.1)', className: 'texture-N' };
+                            if (window.parent && window.parent.EastAsiaApp && window.parent.EastAsiaApp.getStyle) {
+                                style = window.parent.EastAsiaApp.getStyle(r.regimeCode, r.name, r.suzerainCode || r.suzerain, r.suzerainType);
+                            }
 
-                        // 生成 Layout 对象
-                        this.computedLayouts.push({
-                            regimeId: r._id,
-                            regime: r,
-                            top: topPx,
-                            bottom: bottomPx,
-                            height: actualHeight,
-                            left: left,
-                            width: width,
-                            style: style,
-                            tier: r.tier,
-                            zIndex: zIndexBase + idx
+                            this.computedLayouts.push({
+                                regimeId: r.regimeId,
+                                regime: r,
+                                top: topPx,
+                                bottom: bottomPx,
+                                height: actualHeight,
+                                left: left,
+                                width: width,
+                                style: style,
+                                tier: r.tier,
+                                zIndex: zIndexBase + idx
+                            });
                         });
                     });
+                } else {
+                    // === 降级策略（旧逻辑）===
+                    console.warn('[Timeline] Warning: No sliceData found for region ' + regionId);
+
+
                 }
             },
 
@@ -2459,9 +2449,9 @@
                     div.style.width = `calc(${item.width}% - 1px)`;
 
                     if (item.height < 20) div.classList.add('tiny-slice');
-                    if (State.lockedRegimeId === r._id) div.classList.add('active-locked');
+                    if (State.selectedRegimeId === r.regimeId) div.classList.add('active-locked');
 
-                    const lockIcon = (State.lockedRegimeId === r._id) ? '🔒 ' : '';
+                    const lockIcon = (State.selectedRegimeId === r.regimeId) ? '🔒 ' : '';
 
                     // 字体大小计算 (运行时计算以适应变化)
                     const widthPx = (item.width / 100) * 400; // 假设容器宽400左右，或者 scroller.clientWidth
@@ -2483,7 +2473,7 @@
                     // [Fix] 显式捕获 this，避免上下文丢失
                     const self = this;
                     div.onclick = function (e) {
-                        console.log('[Timeline Debug] Clicked:', r.name, r._id);
+                        console.log('[Timeline Debug] Clicked:', r.name, r.regimeId);
                         if (self.handleSliceClick) {
                             e.stopPropagation();
                             self.handleSliceClick(r);
@@ -2535,19 +2525,19 @@
             },
 
             handleSliceClick(r) {
-                console.log('[Timeline Debug] handleSliceClick:', r.name, 'LockedID:', State.lockedRegimeId);
+                console.log('[Timeline Debug] handleSliceClick:', r.name, 'LockedID:', State.selectedRegimeId);
 
-                if (State.lockedRegimeId === r._id) {
+                if (State.selectedRegimeId === r.regimeId) {
                     try {
                         UICtrl.openRegimeModal(r);
                     } catch (e) {
                         console.error('[Timeline Debug] Open modal failed:', e);
-                        State.lockedRegimeId = null;
+                        State.selectedRegimeId = null;
                         this.updateLockStateDOM(); // [Fix] 只更新样式
                     }
                 } else {
                     // 首次点击：锁定政权
-                    State.lockedRegimeId = r._id;
+                    State.selectedRegimeId = r.regimeId;
                     State._lockTime = Date.now(); // [New] 记录锁定时间，用于冷却期保护
                     this.updateLockStateDOM(); // [Fix] 只更新样式
 
@@ -2560,7 +2550,12 @@
                     if (window.parent) {
                         window.parent.postMessage({
                             type: 'STATE_UPDATE_REQUEST',
-                            payload: { locked: r._id }
+                            payload: {
+                                selectedRegimeId: r.regimeId, // [Unified] 统一命名
+                                // [Fix] 优先使用渲染时绑定的区域代码，确保点击时间轴时绝对不会跳转到其他区域
+                                region: (this.currentRegionCode) ? String(this.currentRegionCode) : (State.currentRegion ? String(State.currentRegion.code) : r.geoCode),
+                                year: State.currentYear
+                            }
                         }, window.location.origin);
                     }
                 }
@@ -2573,7 +2568,7 @@
                     const id = div.dataset.regimeId;
                     const label = div.querySelector('.slice-text');
 
-                    if (id === String(State.lockedRegimeId)) {
+                    if (id === String(State.selectedRegimeId)) {
                         div.classList.add('active-locked');
                         if (label && !label.innerText.includes('🔒')) {
                             label.innerText = '🔒 ' + label.innerText;
@@ -2637,6 +2632,7 @@
                 if (d && d.regimes.length) {
                     d.regimes.sort((a, b) => a.start - b.start);
                     const yearToScroll = (preserveYear !== null) ? preserveYear : null;
+                    if (TimelineCtrl) TimelineCtrl.currentRegionCode = item.code;
                     TimelineCtrl.render(d.regimes, yearToScroll);
                 } else {
                     document.getElementById('waterfall-content').innerHTML = "<div style='padding:20px;text-align:center;'>暂无数据</div>";
@@ -2664,7 +2660,7 @@
                 const p = document.getElementById('ai-panel');
                 p.classList.remove('open'); p.classList.remove('half-mode');
                 MapCtrl.deselectAll();
-                State.lockedRegimeId = null;
+                State.selectedRegimeId = null;
                 MapCtrl.zoomToMacro();
             },
 
@@ -2918,9 +2914,6 @@
                 jumpBtn.onclick = () => {
                     if (window.parent.EastAsiaApp) {
                         window.parent.EastAsiaApp.switchView('panorama');
-                        setTimeout(() => {
-                            window.parent.EastAsiaApp.broadcast('CMD_JUMP', { regime: r.name || r.regime_name, year: r.startStr || r.start_year });
-                        }, 200);
                     }
                 };
 
