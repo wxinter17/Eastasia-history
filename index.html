@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史交互地图系统 (v5.02)</title>
+    <title>东亚历史交互地图系统 (v5.03)</title>
 
     <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
     <script>
-        window.APP_VERSION = '2026.01.04.004';
+        window.APP_VERSION = '2026.01.05.001';
         window.APP_CONFIG = {
             // 缓存版本检查
             checkCache: function () {
@@ -1029,7 +1029,7 @@
             state: {
                 // === 核心全局状态（单一数据源）===
                 currentView: 'map',          // map | panorama
-                year: -220,                  // 当前时间点
+                year: -2070,                 // 当前时间点（默认：夏朝开始）
                 selectedRegime: null,        // 当前选中政权ID
                 locked: false,               // 是否锁定政权
                 focusMode: false,            // AI面板是否激活
@@ -1108,7 +1108,7 @@
                 const params = new URLSearchParams();
 
                 // 只同步核心状态
-                if (this.state.year !== -220) params.set('year', this.state.year);
+                if (this.state.year !== -2070) params.set('year', this.state.year);
                 if (this.state.selectedRegime) params.set('regime', this.state.selectedRegime);
                 if (this.state.currentView !== 'map') params.set('view', this.state.currentView);
                 if (this.state.locked) params.set('locked', '1');

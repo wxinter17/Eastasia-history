@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>History Map View (v16.01)</title>
+    <title>History Map View (v16.02)</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.04.003';
+        window.APP_VERSION = '2026.01.05.001';
     </script>
 
     <script>
@@ -524,7 +524,8 @@
             position: sticky;
             top: 0;
             width: 100%;
-            pointer-events: none;
+            /* pointer-events: none; */
+            /* [Fix] 注释掉，否则点击事件无法触发 */
             text-align: center;
             padding-top: 2px;
             z-index: 30;
@@ -997,7 +998,7 @@
     <script>
         // --- Logger (Buffer System) ---
         const Logger = {
-            buffer: [], ready: false,
+            buffer: [],
             log(msg, type = 'info') { console.log(`[${type.toUpperCase()}] ${msg}`); },
             info(msg) { this.log(msg, 'info'); },
             warn(msg) { this.log(msg, 'warn'); },
@@ -1185,6 +1186,7 @@
                     history.scrollRestoration = 'manual';
                 }
                 console.log("正在初始化地图...");
+                window._initTime = Date.now(); // [New] 记录初始化时间
                 MapCtrl.init(); // 初始化 Leaflet
                 // [新增] 启动时尝试同步布局库
                 this.loadLayoutFromDB();
@@ -1207,7 +1209,7 @@
 
                     // 1. 初始化数据与样式
                     if (type === 'INIT_DATA') {
-                        const { data, sharedCSS, config } = payload;
+                        const { data, sharedCSS, layout, config } = payload;
 
                         // [关键修复] 注入父级发来的 CSS (解决 texture-V/J 无效问题)
                         // 如果没有这一步，地图上的虚线和网格纹理将无法显示
@@ -1219,6 +1221,12 @@
                                 document.head.appendChild(styleEl);
                             }
                             styleEl.innerHTML = sharedCSS;
+                        }
+
+                        // [New] 保存布局数据，用于瀑布图政权排序
+                        if (layout) {
+                            State.layoutData = layout;
+                            console.log('[Map] Layout data received:', layout.version || 'unknown');
                         }
 
                         // 保存 API Key
@@ -1316,24 +1324,32 @@
 
                         // 1. 同步年份
                         if (appState.year !== undefined) {
-                            // 更新本地State
-                            State.currentYear = appState.year;
+                            // [Fix] 初始化阶段（前2秒）的保护逻辑：
+                            // - 如果本地年份已经被设置过（非默认值），且在初始化阶段，则忽略外部同步
+                            // - 但如果本地年份是默认值 -2070 或未设置，则接受外部同步（这通常是URL恢复的年份）
+                            const isInitPhase = (Date.now() - (window._initTime || Date.now())) < 2000;
+                            const isDefaultYear = !State.currentYear || State.currentYear === -2070;
 
-                            // 更新按钮显示
-                            const yearBtn = document.getElementById('cursor-year-btn');
-                            if (yearBtn) yearBtn.innerText = appState.year;
+                            // 允许更新的条件：1. 不在初始化阶段，或 2. 本地是默认年份
+                            if (!isInitPhase || isDefaultYear) {
+                                State.currentYear = appState.year;
 
-                            // 更新时间轴滚动位置（使用正确的方法）
-                            // 如果用户正在主动滚动，则跳过程序化滚动，避免打断用户
-                            if (typeof TimelineCtrl !== 'undefined' && TimelineCtrl.scrollTo && !TimelineCtrl._userScrolling) {
-                                TimelineCtrl.isProgrammaticScroll = true;
-                                TimelineCtrl.scrollTo(appState.year);
-                                setTimeout(() => { TimelineCtrl.isProgrammaticScroll = false; }, 500);
-                            }
+                                // 更新按钮显示
+                                const yearBtn = document.getElementById('cursor-year-btn');
+                                if (yearBtn) yearBtn.innerText = appState.year;
 
-                            // 更新地图高亮
-                            if (MapCtrl && MapCtrl.updateHighlight) {
-                                MapCtrl.updateHighlight(appState.year);
+                                // 更新时间轴滚动位置（使用正确的方法）
+                                // 如果用户正在主动滚动，则跳过程序化滚动，避免打断用户
+                                if (typeof TimelineCtrl !== 'undefined' && TimelineCtrl.scrollTo && !TimelineCtrl._userScrolling) {
+                                    TimelineCtrl.isProgrammaticScroll = true;
+                                    TimelineCtrl.scrollTo(appState.year);
+                                    setTimeout(() => { TimelineCtrl.isProgrammaticScroll = false; }, 500);
+                                }
+
+                                // 更新地图高亮
+                                if (MapCtrl && MapCtrl.updateHighlight) {
+                                    MapCtrl.updateHighlight(appState.year);
+                                }
                             }
                         }
 
@@ -1935,8 +1951,11 @@
                     const allRegimesFlat = Object.values(State.dataMap).flatMap(d => d.regimes);
                     let currentLocked = allRegimesFlat.find(r => r._id === State.lockedRegimeId);
 
-                    // [Refixed] 强制解锁逻辑
-                    if (!currentLocked || year < currentLocked._start || year > currentLocked._end) {
+                    // [Fix] 强制解锁逻辑 + 冷却期保护
+                    // 如果在用户刚锁定后的500ms内，不执行自动解锁
+                    const lockCooldown = Date.now() - (State._lockTime || 0) < 500;
+
+                    if (!currentLocked || (!lockCooldown && (year < currentLocked._start || year > currentLocked._end))) {
                         State.lockedRegimeId = null;
                         target = findSuccessor(currentLocked, actives);
                     } else {
@@ -2237,6 +2256,8 @@
 
                 const minStart = Math.min(...starts);
                 State.timelineMinYear = minStart - 50;
+                // [Fix] 防止异常数据导致坐标系崩坏 (例如 -9999)
+                if (State.timelineMinYear < -3000) State.timelineMinYear = -3000;
                 if (isNaN(State.timelineMinYear) || !isFinite(State.timelineMinYear)) State.timelineMinYear = -200;
 
                 State.timelineMaxYear = Math.max(...ends) + 50;
@@ -2291,23 +2312,47 @@
                     const active = regimes.filter(r => r._start < t2 && r._end > t1);
                     if (active.length === 0) continue;
 
-                    // [核心修改] 引入全局 Rank 排序
-                    // 如果存在 State.rankMap，则按照全景图的 Master Sequence 进行对齐
+                    // [核心修改] 使用 IndexedDB 布局数据来排序政权
+                    // 这样可以确保地图页瀑布图与全景图的政权顺序一致
+                    const regionId = active[0]?.geoCode || active[0]?.geo_code;
+                    const layoutMap = State.layoutData && State.layoutData.layout ? State.layoutData.layout[regionId] : null;
+                    const yearKey = String(t1);
+                    const slots = layoutMap ? (layoutMap[yearKey] || []) : [];
+
                     active.sort((a, b) => {
-                        if (State.rankMap) {
-                            // [Fix] Use Region Rank (Unified with Panorama Column Order)
-                            const geoA = a.geoCode || a.geo_code;
-                            const geoB = b.geoCode || b.geo_code;
-                            const rankA = State.rankMap[geoA];
-                            const rankB = State.rankMap[geoB];
-                            // 只有当两者都有 Rank 时才比较 Rank
-                            if (rankA !== undefined && rankB !== undefined) {
+                        if (slots.length > 0) {
+                            // 使用 LayoutOptimizer 的格式: "政权名|政权代码"
+                            const idA = (a.name || '') + '|' + (a.regimeCode || a.name || '');
+                            const idB = (b.name || '') + '|' + (b.regimeCode || b.name || '');
+
+                            // 先查精确匹配，再查名称
+                            let rankA = slots.indexOf(idA);
+                            if (rankA === -1) rankA = slots.indexOf(a.name);
+                            let rankB = slots.indexOf(idB);
+                            if (rankB === -1) rankB = slots.indexOf(b.name);
+
+                            // [Debug] 首次遇到后北条氏时输出调试信息
+                            if ((a.name === '后北条氏' || b.name === '后北条氏') && !this._debuggedHojo) {
+                                console.log('[Layout Debug] 后北条氏排序:', {
+                                    year: t1, regionId,
+                                    slots: slots.slice(0, 5),
+                                    idA, idB, rankA, rankB
+                                });
+                                this._debuggedHojo = true;
+                            }
+
+                            // 如果都找到了，按布局顺序排序
+                            if (rankA !== -1 && rankB !== -1) {
                                 return rankA - rankB;
                             }
+                            // 如果只有一个找到，找到的排前面
+                            if (rankA !== -1) return -1;
+                            if (rankB !== -1) return 1;
                         }
                         // 降级策略：按车道或时间排序
                         return a._globalLane - b._globalLane;
                     });
+
                     const count = active.length;
                     const unitWidth = 100 / count;
                     const zIndexBase = 50000 - (i * 100);
@@ -2435,7 +2480,17 @@
 
                     div.innerHTML = `<div class="slice-label-sticky"><span class="slice-text ${fontClass}" style="font-size:${fontSize}px;">${lockIcon}${r.name}</span></div>`;
 
-                    div.onclick = (e) => { e.stopPropagation(); this.handleSliceClick(r); };
+                    // [Fix] 显式捕获 this，避免上下文丢失
+                    const self = this;
+                    div.onclick = function (e) {
+                        console.log('[Timeline Debug] Clicked:', r.name, r._id);
+                        if (self.handleSliceClick) {
+                            e.stopPropagation();
+                            self.handleSliceClick(r);
+                        } else {
+                            console.error('[Timeline Debug] handleSliceClick not found on self:', self);
+                        }
+                    };
                     fragment.appendChild(div);
                 });
 
@@ -2448,39 +2503,88 @@
                 // 1. 计算布局
                 this.calculateLayout(regimes);
 
-                // 2. 初始滚动位置 [Fix] 使用 State.currentYear 而不是当前年份
-                const targetYear = (typeof preserveYear === 'number' && !isNaN(preserveYear)) ? preserveYear : State.currentYear;
+                // 2. 初始滚动位置 [Fix] 优先使用 preserveYear，其次是 URL 参数，最后是 State
+                let targetYear = preserveYear;
+                if (targetYear === undefined || targetYear === null) {
+                    if (window.parent && window.parent.EastAsiaApp && window.parent.EastAsiaApp.state) {
+                        targetYear = window.parent.EastAsiaApp.state.year;
+                    }
+                }
+                if (targetYear === undefined || targetYear === null) targetYear = State.currentYear;
+
+                console.log('[Timeline Debug] render targetYear:', targetYear);
+
+                if (targetYear === undefined || targetYear === null) targetYear = State.currentYear;
+
+                console.log('[Timeline Debug] render targetYear:', targetYear);
 
                 // 需要先算出目标位置再 Render，否则 scrollTop 为 0
                 const px = (targetYear - State.timelineMinYear) * CONFIG.pixelsPerYear;
                 const scroller = document.getElementById('waterfall-scroll');
                 if (scroller) {
+                    // [Fix] 设置标志位，防止初始化滚动触发生命周期更新
+                    this.isProgrammaticScroll = true;
                     scroller.scrollTop = Math.max(0, px - (scroller.clientHeight / 2));
-                    // 初始强制渲染一次 (因为 scroll事件可能是异步的)
+
+                    // 初始强制渲染一次
                     this.virtualRender();
+
+                    // 延迟释放标志位，等待滚动事件平息
+                    setTimeout(() => { this.isProgrammaticScroll = false; }, 200);
                 }
             },
 
             handleSliceClick(r) {
+                console.log('[Timeline Debug] handleSliceClick:', r.name, 'LockedID:', State.lockedRegimeId);
+
                 if (State.lockedRegimeId === r._id) {
                     try {
                         UICtrl.openRegimeModal(r);
                     } catch (e) {
+                        console.error('[Timeline Debug] Open modal failed:', e);
                         State.lockedRegimeId = null;
-                        this.virtualRender(); // 只需重绘 DOM (更新 active-locked class)
+                        this.updateLockStateDOM(); // [Fix] 只更新样式
                     }
                 } else {
+                    // 首次点击：锁定政权
                     State.lockedRegimeId = r._id;
-                    let targetYear = State.currentYear;
-                    if (State.currentYear < r._start || State.currentYear > r._end) {
-                        targetYear = r._start + 5;
+                    State._lockTime = Date.now(); // [New] 记录锁定时间，用于冷却期保护
+                    this.updateLockStateDOM(); // [Fix] 只更新样式
+
+                    // [Fix] 显式调用 updateHighlight 确保地图响应
+                    if (window.MapCtrl) window.MapCtrl.updateHighlight(State.currentYear);
+
+                    UICtrl.showToast(`已锁定: ${r.name}。再次点击查看详情`);
+
+                    // [Fix] 立即通知父窗口锁定状态，防止 STATE_SYNC 用旧状态覆盖本地
+                    if (window.parent) {
+                        window.parent.postMessage({
+                            type: 'STATE_UPDATE_REQUEST',
+                            payload: { locked: r._id }
+                        }, window.location.origin);
                     }
-                    this.scrollTo(targetYear); // scrollTo 会更新 currentYear 并可能触发 scroll
-                    // 需要手动触发一次 virtualRender 以更新高亮样式
-                    this.virtualRender();
-                    MapCtrl.updateHighlight(targetYear);
-                    UICtrl.showToast(`已锁定: ${r.name}`);
                 }
+            },
+
+            // [New] 辅助函数：只更新锁定样式，不重绘
+            updateLockStateDOM() {
+                const all = document.querySelectorAll('.regime-slice');
+                all.forEach(div => {
+                    const id = div.dataset.regimeId;
+                    const label = div.querySelector('.slice-text');
+
+                    if (id === String(State.lockedRegimeId)) {
+                        div.classList.add('active-locked');
+                        if (label && !label.innerText.includes('🔒')) {
+                            label.innerText = '🔒 ' + label.innerText;
+                        }
+                    } else {
+                        div.classList.remove('active-locked');
+                        if (label) {
+                            label.innerText = label.innerText.replace('🔒 ', '');
+                        }
+                    }
+                });
             },
 
             scrollTo(y) {
@@ -2544,6 +2648,16 @@
                     MapCtrl.zoomToMacro();
                 }
                 State.pendingSwitchRegion = null;
+            },
+
+            // [Fix] 补全缺失的 closeModal 方法
+            closeModal() {
+                document.querySelectorAll('.regime-modal').forEach(el => el.classList.remove('show'));
+            },
+
+            // [Fix] 添加缺失的closeModal方法，防止报错中断逻辑
+            closeModal() {
+                document.querySelectorAll('.regime-modal').forEach(el => el.classList.remove('show'));
             },
 
             closeAIPanel() {

@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v11.02)</title>
+    <title>东亚历史全景 (v11.03)</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.04.004';
+        window.APP_VERSION = '2026.01.05.001';
     </script>
 
     <!-- [Unified CSS] Native Style (Merged) -->
@@ -1429,6 +1429,13 @@
                     // 节流：滚动停止300ms后才更新状态（避免高频postMessage）
                     clearTimeout(scrollTimer);
                     scrollTimer = setTimeout(() => {
+                        // [Fix] 初始化阶段（前2秒）不发送滚动状态更新，防止覆盖URL指定的年份
+                        const timeSinceInit = Date.now() - (Core._initTime || Date.now());
+                        if (timeSinceInit < 2000) {
+                            console.log('[Panorama] 初始化阶段，跳过滚动状态同步');
+                            return;
+                        }
+
                         const centerYear = window.getCenterYear ? window.getCenterYear() : null;
                         if (centerYear !== null && window.parent && window.parent !== window) {
                             window.parent.postMessage({
