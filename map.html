@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>History Map View (v16.03)</title>
+    <title>地图页 v16.04</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.06.001';
+        window.APP_VERSION = '2026.01.07.001';
     </script>
 
     <script>
@@ -1327,8 +1327,9 @@
                                     setTimeout(() => { TimelineCtrl.isProgrammaticScroll = false; }, 500);
                                 }
 
-                                // 更新地图高亮
-                                if (MapCtrl && MapCtrl.updateHighlight) {
+                                // 更新地图高亮（仅当详情面板打开时）
+                                const panelOpen = document.getElementById('ai-panel')?.classList.contains('open');
+                                if (panelOpen && MapCtrl && MapCtrl.updateHighlight) {
                                     MapCtrl.updateHighlight(appState.year);
                                 }
                             }
@@ -1346,43 +1347,84 @@
                         // 3. 同步区域 (New)
                         if (appState.region) {
                             const rCode = parseInt(appState.region);
-                            if (State.currentRegion && State.currentRegion.code !== rCode) {
-                                if (State.layers && State.layers[rCode]) {
-                                    // Reset old style
-                                    if (State.selectedLayer) {
-                                        const oldCode = State.currentRegion.code;
-                                        if (State.layers[oldCode]) {
-                                            State.layers[oldCode].setStyle({ weight: 1, color: MapCtrl.getColor(oldCode), opacity: 0.9, fillOpacity: 0.4 });
-                                        }
+                            // [Fix] 也处理首次加载时 currentRegion 为 null 的情况
+                            const needSwitch = !State.currentRegion || State.currentRegion.code !== rCode;
+                            if (needSwitch && State.layers && State.layers[rCode]) {
+                                // Reset old style (if exists)
+                                if (State.selectedLayer && State.currentRegion) {
+                                    const oldCode = State.currentRegion.code;
+                                    if (State.layers[oldCode]) {
+                                        State.layers[oldCode].setStyle({ weight: 1, color: MapCtrl.getColor(oldCode), opacity: 0.9, fillOpacity: 0.4 });
                                     }
-
-                                    // Set new region
-                                    State.selectedLayer = State.layers[rCode];
-
-                                    // [Fix] 正确获取地区名称 (挂载在 itemData 上而非 feature)
-                                    const layerItem = State.layers[rCode].itemData || {};
-                                    State.currentRegion = {
-                                        code: rCode,
-                                        name: layerItem.name || 'Unknown',
-                                        desc: layerItem.desc || ''
-                                    };
-
-                                    // Trigger update
-                                    UICtrl.openDetailPanel(State.currentYear);
-                                    MapCtrl.updateHighlight(State.currentYear);
                                 }
+
+                                // Set new region
+                                State.selectedLayer = State.layers[rCode];
+
+                                // [Fix] 正确获取地区数据 (直接使用完整的 itemData，确保 group 等属性存在)
+                                const layerItem = State.layers[rCode].itemData || {};
+                                State.currentRegion = {
+                                    ...layerItem,
+                                    code: rCode  // 确保 code 是数字类型
+                                };
+
+                                // Trigger update
+                                UICtrl.openDetailPanel(State.currentYear);
+                                MapCtrl.updateHighlight(State.currentYear);
                             }
                         }
 
+
                         // 4. 同步选中的政权 (Lock)
                         if (appState.selectedRegimeId !== undefined) {
-                            // [Fix] 状态变更时先清理旧模态框，防止残留
+                            // [Fix] 状态变更时先清理旧模态框,防止残留
                             const oldModal = document.getElementById('regime-modal');
                             if (oldModal) oldModal.classList.remove('show');
 
                             if (appState.selectedRegimeId) {
                                 State.selectedRegimeId = appState.selectedRegimeId;
-                                // 刷新 Timeline 以显示锁定状态 (必须使用当前区域的数据！)
+
+                                // [Smart Fallback] 如果只同步了政权 ID 但没有 Region（例如从全景页跳回）
+                                // 且当前并未选中任何区域，则自动查找该政权的归属地并打开面板
+                                if (!State.currentRegion && State.dataMap) {
+                                    let foundRegionCode = null;
+                                    // 遍历所有区域查找该政权
+                                    const regions = Object.keys(State.dataMap);
+                                    for (let code of regions) {
+                                        const rData = State.dataMap[code];
+                                        if (rData && rData.regimes) {
+                                            const match = rData.regimes.find(r => r.regimeId === appState.selectedRegimeId);
+                                            // 必须在当前年份有效
+                                            if (match && State.currentYear >= match._start && State.currentYear <= match._end) {
+                                                foundRegionCode = parseInt(code);
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (foundRegionCode && State.layers[foundRegionCode]) {
+                                        console.log(`[Map] 自动定位政权 ${appState.selectedRegimeId} 至区域 ${foundRegionCode}`);
+                                        // [Fix] 使用完整的 itemData，确保 group 等属性正确获取
+                                        const layerItem = State.layers[foundRegionCode].itemData || {};
+                                        State.currentRegion = {
+                                            ...layerItem,
+                                            code: foundRegionCode  // 确保 code 是数字类型
+                                        };
+                                        State.selectedLayer = State.layers[foundRegionCode];
+
+                                        // 设置区域样式为选中态
+                                        State.selectedLayer.setStyle({
+                                            weight: 3, color: '#c0392b', opacity: 1, fillOpacity: 0.6,
+                                            fillColor: MapCtrl.getColor(foundRegionCode)
+                                        });
+                                        State.selectedLayer.bringToFront();
+
+                                        // 强制打开面板
+                                        UICtrl.openDetailPanel(State.currentYear);
+                                    }
+                                }
+
+                                // 刷新 Timeline 以显示锁定状态 (必须使用当前区域的数据!)
                                 const currentCode = State.currentRegion ? State.currentRegion.code : null;
                                 const currentData = (currentCode && State.dataMap[currentCode]) ? State.dataMap[currentCode].regimes : [];
 
@@ -1394,13 +1436,39 @@
                                 if (rName && UICtrl.highlightRegime) UICtrl.highlightRegime(rName);
 
                             } else {
+                                // [Fix] selectedRegimeId 为 null,清除锁定状态
                                 State.selectedRegimeId = null;
-                                const currentCode = State.currentRegion ? State.currentRegion.code : null;
-                                const currentData = (currentCode && State.dataMap[currentCode]) ? State.dataMap[currentCode].regimes : [];
+                                State.lastActiveRegime = null;
 
-                                if (typeof TimelineCtrl !== 'undefined') {
-                                    TimelineCtrl.render(currentData, State.currentYear);
+                                // [Fix] 如果同时 region 也为 null,说明是完全重置,关闭详情面板
+                                if (!appState.region || appState.region === null) {
+                                    const aiPanel = document.getElementById('ai-panel');
+                                    if (aiPanel && aiPanel.classList.contains('open')) {
+                                        console.log('[Map] STATE_SYNC: 检测到完全重置,关闭详情面板');
+                                        // 直接关闭面板,不触发额外的状态更新
+                                        aiPanel.classList.remove('open');
+                                        aiPanel.classList.remove('half-mode');
+
+                                        // 重置选中状态
+                                        State.currentRegion = null;
+                                        State.selectedLayer = null;
+
+                                        // 重置地图视角
+                                        if (MapCtrl && MapCtrl.zoomToMacro) {
+                                            MapCtrl.zoomToMacro();
+                                        }
+                                    }
+                                } else {
+                                    // 有 region 但无 selectedRegimeId,重新渲染 timeline
+                                    const currentCode = State.currentRegion ? State.currentRegion.code : null;
+                                    const currentData = (currentCode && State.dataMap[currentCode]) ? State.dataMap[currentCode].regimes : [];
+
+                                    if (typeof TimelineCtrl !== 'undefined') {
+                                        TimelineCtrl.render(currentData, State.currentYear);
+                                    }
                                 }
+
+                                // 清除高亮
                                 if (UICtrl.clearHighlight) UICtrl.clearHighlight();
                             }
                             console.log('[Map] Regime locked:', appState.selectedRegimeId);
@@ -1413,6 +1481,9 @@
                             selectedRegimeId: appState.selectedRegimeId
                         });
                     }
+
+                    // [镜像同步架构] 移除 PREPARE_VIEW_SWITCH 处理
+                    // 两个页面始终保持同步，视图切换只是 CSS 显示/隐藏，无需清理
                 });
 
                 // 通知父级：地图加载完毕
@@ -1457,8 +1528,10 @@
                 State.currentRegion = null;
                 State.selectedLayer = null;
                 State.pendingSwitchRegion = null;
+                State.pendingPreselect = null;  // [Fix]
                 State.selectedRegimeId = null;
                 State.currentRegimeData = null;
+                State.lastActiveRegime = null;  // [Fix] 清除高亮追踪
                 State.isEditMode = false;
                 State.isDelMode = false;
 
@@ -1899,7 +1972,9 @@
 
                 this.deselectAll();
                 State.selectedLayer = poly;
-                State.currentRegion = item;
+                // [Fix] 首次点击只是预选，不设置 currentRegion，避免触发联动高亮模式
+                // currentRegion 只在真正打开详情面板时设置
+                State.pendingPreselect = item;  // 临时存储，等用户点击"查看详情"时再正式设置
                 poly.setStyle({ weight: 3, color: '#e74c3c', opacity: 1, fillOpacity: 0.6 });
                 poly.bringToFront();
                 UICtrl.updateContextToolbar();
@@ -1908,23 +1983,33 @@
             deselectAll() {
                 if (State.selectedLayer && State.selectedLayer.pm && State.selectedLayer.pm.enabled()) State.selectedLayer.pm.disable();
                 State.selectedLayer = null;
+                State.pendingPreselect = null;  // [Fix] 清除预选状态
+                State.lastActiveRegime = null;  // [Fix] 清除高亮追踪
+
                 Object.values(State.layers).forEach(layer => {
                     const code = layer.itemData.code;
-                    // [修复] 必须显式重置 fillColor，否则高亮后的金色会残留
+                    // [修复] 强制使用 getColor 重新计算基准色
+                    const baseColor = this.getColor(code);
+
                     layer.setStyle({
                         weight: 1,
-                        color: this.getColor(code),
+                        color: baseColor,
                         opacity: 0.9,
                         fillOpacity: 0.4,
-                        fillColor: this.getColor(code), // <--- Critical Fix
+                        fillColor: baseColor,
                         dashArray: null
                     });
+
                     if (layer._path) {
                         layer._path.classList.remove('glow-effect');
                         layer._path.classList.remove('conflict-effect');
                     }
-                    if ([710, 520, 610, 620].includes(code)) layer.bringToBack();
+                    if ([710, 520, 610, 620].includes(parseInt(code))) layer.bringToBack();
                 });
+
+                // [New] 强制重绘
+                if (this.map) this.map.invalidateSize(false);
+
                 document.getElementById('switch-modal').classList.remove('show');
                 UICtrl.updateContextToolbar();
             },
@@ -2065,7 +2150,10 @@
             // --- 替换 MapCtrl 对象中的 getColor ---
             getColor(code) {
                 if (window.parent && window.parent.EastAsiaApp && window.parent.EastAsiaApp.calcColor) {
-                    return window.parent.EastAsiaApp.calcColor(code);
+                    // [Fix] 传递区域名称，确保颜色计算一致
+                    const layer = State.layers[code];
+                    const name = layer && layer.itemData ? layer.itemData.name : null;
+                    return window.parent.EastAsiaApp.calcColor(code, name);
                 }
                 return '#666'; // Fallback
             },
@@ -2618,6 +2706,21 @@
 
             openDetailPanel(preserveYear = null) {
                 Logger.ui("Opening Detail Panel...");
+
+                // [Fix] 如果 currentRegion 为空但有预选区域，使用预选区域
+                if (!State.currentRegion && State.pendingPreselect) {
+                    State.currentRegion = State.pendingPreselect;
+                    State.pendingPreselect = null;
+
+                    // 同步到父页面
+                    if (window.parent) {
+                        window.parent.postMessage({
+                            type: 'STATE_UPDATE_REQUEST',
+                            payload: { region: String(State.currentRegion.code) }
+                        }, window.location.origin);
+                    }
+                }
+
                 if (!State.currentRegion) return;
 
                 const item = State.currentRegion;
@@ -2646,22 +2749,76 @@
                 State.pendingSwitchRegion = null;
             },
 
-            // [Fix] 补全缺失的 closeModal 方法
-            closeModal() {
-                document.querySelectorAll('.regime-modal').forEach(el => el.classList.remove('show'));
-            },
-
-            // [Fix] 添加缺失的closeModal方法，防止报错中断逻辑
-            closeModal() {
-                document.querySelectorAll('.regime-modal').forEach(el => el.classList.remove('show'));
+            // 关闭政权模态框（只关闭UI，不影响全局状态）
+            closeModal(id) {
+                if (id) {
+                    const el = document.getElementById(id);
+                    if (el) el.classList.remove('show');
+                } else {
+                    document.querySelectorAll('.regime-modal').forEach(el => el.classList.remove('show'));
+                }
+                // 注意：状态清除由 closeAIPanel 统一处理，这里只做 UI 操作
             },
 
             closeAIPanel() {
                 const p = document.getElementById('ai-panel');
                 p.classList.remove('open'); p.classList.remove('half-mode');
-                MapCtrl.deselectAll();
+
+                // [Fix] Step 1: 先清除所有状态
                 State.selectedRegimeId = null;
+                State.lastActiveRegime = null;
+                State.currentRegion = null;
+                State.selectedLayer = null;
+
+                // [Fix] Step 2: 批量重置所有区域样式,确保颜色一致性
+                Object.keys(State.layers).forEach(code => {
+                    const layer = State.layers[code];
+                    // 每次调用 getColor 时状态已清空,确保基于同一逻辑计算颜色
+                    const baseColor = MapCtrl.getColor(code);
+
+                    layer.setStyle({
+                        weight: 1,
+                        color: baseColor,
+                        opacity: 0.9,
+                        fillOpacity: 0.4,
+                        fillColor: baseColor,
+                        dashArray: null
+                    });
+
+                    // 清除特效
+                    if (layer._path) {
+                        layer._path.classList.remove('glow-effect');
+                        layer._path.classList.remove('conflict-effect');
+                    }
+
+                    // 大区域置底
+                    if ([710, 520, 610, 620].includes(parseInt(code))) {
+                        layer.bringToBack();
+                    }
+                });
+
+                // [Fix] Step 3: 强制刷新地图渲染,确保 Leaflet 更新所有图层
+                if (MapCtrl.map) {
+                    MapCtrl.map.invalidateSize(false);
+                    // 二次刷新确保彻底更新
+                    setTimeout(() => {
+                        if (MapCtrl.map) MapCtrl.map.invalidateSize(false);
+                    }, 50);
+                }
+
                 MapCtrl.zoomToMacro();
+                UICtrl.updateContextToolbar();
+
+                // [Fix] Step 4: 立即通知父页面清除全局状态
+                if (window.parent) {
+                    window.parent.postMessage({
+                        type: 'STATE_UPDATE_REQUEST',
+                        payload: {
+                            selectedRegimeId: null,
+                            region: null
+                        }
+                    }, window.location.origin);
+                }
             },
 
             togglePanelSize() {

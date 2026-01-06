@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史交互地图系统 (v5.04)</title>
+    <title>东亚历史交互地图 v5.05</title>
 
     <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
     <script>
-        window.APP_VERSION = '2026.01.06.001';
+        window.APP_VERSION = '2026.01.07.001';
         window.APP_CONFIG = {
             // 缓存版本检查
             checkCache: function () {
@@ -1129,7 +1129,15 @@
                     const year = parseInt(params.get('year'));
                     if (!isNaN(year)) patch.year = year;
                 }
-                if (params.has('regime')) patch.selectedRegimeId = params.get('regime');
+                if (params.has('regime')) {
+                    const regimeParam = params.get('regime');
+                    // [Fix] 验证格式 Name|Code，防止 URL 编码问题导致解析失败
+                    if (regimeParam && regimeParam.includes('|')) {
+                        patch.selectedRegimeId = regimeParam;
+                    } else {
+                        console.warn('[State] Invalid regime format in URL:', regimeParam);
+                    }
+                }
                 if (params.has('view')) patch.currentView = params.get('view');
 
                 if (Object.keys(patch).length > 0) {
@@ -1891,11 +1899,11 @@
             switchView: function (view) {
                 if (view === this.state.currentView) return;
 
-                // [Fix] 不再从 iframe 动态获取年份（会导致竞态条件，获取到滚动中的错误位置）
-                // 直接使用 this.state.year，它已由各页面的滚动同步逻辑正确维护
-                console.log('[switchView] Using stored year:', this.state.year);
+                console.log('[switchView] 切换视图:', this.state.currentView, '→', view);
 
-                // 使用 setState 触发视图切换（单向数据流）
+                // [镜像同步架构] 视图切换 = 纯粹的 CSS 显示/隐藏
+                // 两个页面始终保持同步，无需清理或延迟
+                // setState 会自动触发 broadcastStateSync，两个 iframe 都会收到
                 this.setState({ currentView: view });
             },
 
@@ -1941,8 +1949,16 @@
                     if (this.state.dataReady) this.broadcastData();
                 } else if (type === 'REQUEST_SWITCH') {
                     // [Fix] 如果请求包含参数（如从全景页指定区域跳转），先更新 State
-                    if (payload.params && payload.params.region) {
-                        this.setState({ region: payload.params.region });
+                    const stateUpdate = {};
+                    if (payload.params) {
+                        // [Fix] 添加 year 参数处理，确保年份正确同步
+                        if (payload.params.year !== undefined) stateUpdate.year = payload.params.year;
+                        if (payload.params.region) stateUpdate.region = payload.params.region;
+                        // [Fix] 同时处理 selectedRegimeId，让地图页能自动锁定政权
+                        if (payload.params.selectedRegimeId) stateUpdate.selectedRegimeId = payload.params.selectedRegimeId;
+                    }
+                    if (Object.keys(stateUpdate).length > 0) {
+                        this.setState(stateUpdate);
                     }
                     this.switchView(payload.target);
                 }

@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史全景 (v11.04)</title>
+    <title>全景页 v11.05</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.06.001';
+        window.APP_VERSION = '2026.01.07.001';
     </script>
 
     <!-- [Unified CSS] Native Style (Merged) -->
@@ -1142,7 +1142,7 @@
 
 
         const Core = {
-            state: { regions: [], regionIndexMap: {}, regimeGroups: [], zoom: 1.5, rawData: [], features: { connections: true }, selectedRegimeId: null, lastClickedGeoCode: null, layoutCache: {}, intraColumnCache: {}, isFlipped: false },
+            state: { regions: [], regionIndexMap: {}, regimeGroups: [], zoom: 1.5, rawData: [], features: { connections: true }, selectedRegimeId: null, lastClickedGeoCode: null, clickedYear: null, layoutCache: {}, intraColumnCache: {}, isFlipped: false },
 
             // [New] State sync: Report state changes (e.g. clicks) to parent
             updateParentState: function (updates) {
@@ -1282,6 +1282,10 @@
                         // 调试日志
                         // console.log('[Panorama] STATE_SYNC received:', appState);
                     }
+
+
+                    // [镜像同步架构] 移除 PREPARE_VIEW_SWITCH 处理
+                    // 两个页面始终保持同步，视图切换只是 CSS 显示/隐藏，无需清理
                 });
 
                 // Notify parent
@@ -2260,13 +2264,22 @@
                             e.stopPropagation();
                             let d = clickedBlock.__data__;
                             Core.state.lastClickedGeoCode = d.fragment.geoCode;
+
+                            // [Fix] 方案A：计算点击位置对应的年份（与十字线一致）
+                            const rect = renderArea.getBoundingClientRect();
+                            const clickY = e.clientY - rect.top;
+                            const clickedYear = Math.floor((clickY / Core.state.zoom) + APP_CONFIG.minYear);
+                            Core.state.clickedYear = clickedYear;
+
                             Core.ui.setFocus(d.group.regimeId); // [Refactor] 传递 group.regimeId
                             Core.ui.showDetails(d.group, d.style);
 
                             // [Sync] 点击政权时，向父级上报状态变更
+                            // [Fix] 使用点击位置年份，确保与十字线显示一致
                             Core.updateParentState({
                                 selectedRegimeId: d.group.regimeId,
-                                year: window.getCenterYear ? window.getCenterYear() : undefined
+                                region: String(d.fragment.geoCode),
+                                year: clickedYear
                             });
 
                             return;
@@ -2449,6 +2462,9 @@
                     // 存储逻辑 ID (Name|Code)
                     Core.state.selectedRegimeId = regimeId;
 
+                    // [Fix] 上报状态给父页面，确保左上角切换时能同步
+                    Core.updateParentState({ selectedRegimeId: regimeId });
+
                     // DOM 操作使用 CSS 安全的 groupId (hash)
                     const cssClass = group.groupId;
                     document.body.classList.add('mode-focus');
@@ -2573,19 +2589,23 @@
                     });
 
                     // --- [新增逻辑] 处理标题栏按钮 ---
+                    // [Fix] 优先使用用户点击的片段区域，其次是 lastClickedGeoCode，最后是政权的第一个区域
+                    // 这确保了从任何入口点击都能跳转到正确的区域
                     const targetGeo = Core.state.lastClickedGeoCode || (sortedGeoCodes.length > 0 ? sortedGeoCodes[0] : null);
 
                     // 构建跳转参数对象
-                    // [Fix] 使用当前视口年份，而非政权起始年份，保持时间线一致性
-                    const currentYear = window.getCenterYear ? window.getCenterYear() : group.minStart + 1;
+                    // [Fix] 方案A：优先使用点击位置年份（与十字线一致），fallback 到视口中心年份
+                    const yearToUse = Core.state.clickedYear || (window.getCenterYear ? window.getCenterYear() : group.minStart + 1);
 
                     const jumpPayload = {
                         target: 'map',
                         params: {
                             region: targetGeo,
-                            // [Fix] 移除显式 year 参数，让 index.html 的 switchView 自动使用当前视图年份保持连贯性
-                            // year: currentYear, 
-                            regime: group.name
+                            // [Fix] 使用点击位置年份，确保与用户操作时看到的十字线一致
+                            year: yearToUse,
+                            regime: group.name,
+                            // [Fix] 传递完整的 regimeId，让地图页能够自动锁定该政权
+                            selectedRegimeId: group.regimeId
                         }
                     };
 
