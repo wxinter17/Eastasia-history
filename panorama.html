@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全景页 v11.05</title>
+    <title>全景页 v11.06</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.07.001';
+        window.APP_VERSION = '2026.01.07.002';
     </script>
 
     <!-- [Unified CSS] Native Style (Merged) -->
@@ -291,6 +291,21 @@
             white-space: normal !important;
             word-break: break-word;
             line-height: 1.2 !important;
+        }
+
+        /* [v2.0] H2 两行横排布局 */
+        .label-h2 {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            white-space: nowrap;
+            line-height: 1.2 !important;
+        }
+
+        .label-h2 span {
+            display: block;
         }
 
         .label-tier-1 {
@@ -905,6 +920,7 @@
 
         /**
          * LabelSystem - 负责新的标签布局计算逻辑
+         * [v2.0] 增强版：边界约束 + 智能方向选择 + H2两行布局
          */
         const LabelSystem = {
             index: null, // SpatialIndex instance
@@ -915,170 +931,375 @@
             },
 
             /**
-             * 为单个政权生成标签候选方案
+             * [New] Step 1: 计算政权所有片段的完整边界框 (BoundingBox)
+             * 用于：边界约束检查、方向偏好判断
              * @param {Object} group 政权组
-             * @param {Object} pos 基础位置信息 {x, y, w, h, fullW, ...}
-             * @param {Number} colWidth 列宽
+             * @param {Number} colWidth 列宽(像素)
+             * @param {Number} zoom 缩放倍率
+             * @returns {Object} { x, y, w, h } 边界框（像素坐标）
              */
-            generateCandidates(group, pos, colWidth) {
+            calculateBoundingBox(group, colWidth, zoom) {
+                const slices = group.visualSlices || [];
+                if (slices.length === 0) {
+                    return { x: 0, y: 0, w: 0, h: 0 };
+                }
+
+                let minX = Infinity, maxX = -Infinity;
+                let minY = Infinity, maxY = -Infinity;
+
+                slices.forEach(slice => {
+                    // 计算片段的左边界（像素）
+                    const left = (slice.cIdx + slice.left) * colWidth;
+                    // 计算片段的右边界（像素）
+                    const right = left + slice.w * colWidth;
+                    // 计算片段的上边界（像素，年份转换）
+                    const top = (slice.start - APP_CONFIG.minYear) * zoom;
+                    // 计算片段的下边界（像素）
+                    const bottom = (slice.end - APP_CONFIG.minYear) * zoom;
+
+                    minX = Math.min(minX, left);
+                    maxX = Math.max(maxX, right);
+                    minY = Math.min(minY, top);
+                    maxY = Math.max(maxY, bottom);
+                });
+
+                return {
+                    x: minX,
+                    y: minY,
+                    w: maxX - minX,
+                    h: maxY - minY
+                };
+            },
+
+            /**
+             * [v2.0] Step 2 & 3: 生成标签候选方案
+             * 改进点：
+             * - 使用 bbox（而非 pos）判断方向偏好
+             * - 使用 bestSlice 的尺寸计算字号（更精确）
+             * - 简化为三种布局类型：H(横排)、V(竖排)、H2(横排两行)
+             * 
+             * @param {Object} group 政权组
+             * @param {Object} bbox 边界框 {x, y, w, h}（用于方向偏好）
+             * @param {Object} pos 位置信息
+             * @param {Object} bestSlice 最大片段（用于精确字号计算）
+             * @param {Number} zoom 缩放倍率
+             */
+            generateCandidates(group, bbox, pos, bestSlice, zoom) {
                 const tier = parseInt(group.explicitTier) || 3;
                 const txt = group.name;
                 const len = txt.length;
 
-                // 基础尺寸限制
-                let minFS = 9, maxFS = 16;
+                // 基础尺寸限制（根据 Tier）
+                let minFS = 10, maxFS = 16;
                 if (tier === 1) { minFS = 20; maxFS = 60; }
                 else if (tier === 2) { minFS = 12; maxFS = 28; }
 
-                // 视觉包围盒 (Visual Box)
-                const boxW = (tier === 1 || pos.colSpan >= 2) ? pos.fullW : pos.w;
-                const boxH = pos.h * Core.state.zoom; // Assume zoom access or pass in
-
                 const candidates = [];
-                const paddingFactor = 0.9;
 
-                // 辅助函数: 创建布局方案
-                const addLayout = (type, fsInput, scoreMult = 1.0) => {
-                    let fs = Math.min(Math.max(fsInput, minFS), maxFS);
+                // [Fix v4] 字号计算基准：
+                // - Tier 1：使用 bestSlice 和 bbox 的混合（60%）
+                // - Tier 2：使用 bestSlice 为主（更保守）
+                // - Tier 3：使用 bestSlice（实际片段）
+                let sliceW, sliceH;
+                const bsW = bestSlice ? bestSlice.w : bbox.w;
+                const bsH = bestSlice ? (bestSlice.h * zoom) : bbox.h;
+
+                if (tier === 1) {
+                    // 大朝代：使用 bestSlice 和 bbox 的混合（至少 60% bbox）
+                    sliceW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.6));
+                    sliceH = Math.min(bbox.h, Math.max(bsH, bbox.h * 0.6));
+                } else if (tier === 2) {
+                    // 中等政权：以 bestSlice 为主，但允许适度放大（最多到 bbox 的 40%）
+                    sliceW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.4));
+                    sliceH = Math.min(bbox.h, Math.max(bsH, bbox.h * 0.4));
+                } else {
+                    // 小政权：直接使用 bestSlice
+                    sliceW = bsW;
+                    sliceH = bsH;
+                }
+
+                // 但仍使用 bbox 来判断整体的方向偏好
+                const boxW = bbox.w;
+                const boxH = bbox.h;
+
+                // ========== 方向偏好判断 ==========
+                const ratio = boxH / boxW;
+
+                // [Fix] 降低竖排阈值：ratio > 1.0 就偏好竖排（更敏感）
+                const isNarrowTall = ratio > 1.0;
+
+                // 强制竖排条件：非常窄高 (ratio > 2.0)
+                const mustBeVertical = ratio > 2.0;
+
+                // 条件2: 色块宽度太窄，横排放不下
+                const minHorizontalWidth = len * minFS * 0.9;  // [Fix] 提高阈值
+                const horizontalWontFit = boxW < minHorizontalWidth;
+
+                // 条件3: 色块宽度很宽，适合横排
+                const isWideShort = ratio < 0.6;  // [Fix] 更严格
+
+                // 综合判断偏好方向
+                const preferVertical = isNarrowTall || horizontalWontFit || mustBeVertical;
+                const preferHorizontal = isWideShort && !horizontalWontFit && !mustBeVertical;
+
+                // ========== 辅助函数 ==========
+                const addLayout = (type, fs, scoreMult = 1.0) => {
+                    // [Fix v2] Tier 3 降低最小字号，让更多小政权能显示标签
+                    let effectiveMinFS = minFS;
+                    if (tier === 3) {
+                        if (type === 'H') {
+                            effectiveMinFS = 8;   // 横排最小 8px
+                        } else {
+                            effectiveMinFS = 7;   // V 和 H2 最小 7px
+                        }
+                    }
+
+                    fs = Math.min(Math.max(fs, effectiveMinFS), maxFS);
                     let w = 0, h = 0;
 
                     if (type === 'H') {
-                        w = fs * len; h = fs;
+                        // 横排单行
+                        w = fs * len * 0.95;  // 字符间距系数
+                        h = fs * 1.2;
                     } else if (type === 'V') {
-                        w = fs; h = fs * len;
-                    } else if (type === 'Wrap') {
-                        let cols = Math.ceil(Math.sqrt(len));
-                        if (len >= 6) cols = Math.ceil(len / 2);
-                        let rows = Math.ceil(len / cols);
-                        w = fs * cols; h = fs * rows * 1.1;
+                        // 竖排
+                        w = fs * 1.2;
+                        h = fs * len * 1.1;  // 行高系数
+                    } else if (type === 'H2') {
+                        // 横排两行
+                        const row1Len = Math.ceil(len / 2);
+                        w = fs * row1Len * 0.95;
+                        h = fs * 2.0;  // [Fix] 减少行高，更紧凑
                     }
 
-                    // 检查是否能在不做任何偏移的情况下放入 box (soft constraint)
-                    // const fits = w <= boxW * 1.2 && h <= boxH * 1.2;
+                    // [Fix v2] 放宽溢出惩罚：允许轻微溢出
+                    let overflowPenalty = 1.0;
+                    const overflowX = w / sliceW;
+                    const overflowY = h / sliceH;
+                    // 溢出 20% 以内只轻微惩罚，超过 20% 才大幅惩罚
+                    if (overflowX > 1.2) overflowPenalty *= 0.3;
+                    else if (overflowX > 1.0) overflowPenalty *= 0.8;
+                    if (overflowY > 1.2) overflowPenalty *= 0.3;
+                    else if (overflowY > 1.0) overflowPenalty *= 0.8;
 
                     candidates.push({
                         type, fs, w, h,
-                        scoreMult
+                        scoreMult: scoreMult * overflowPenalty
                     });
                 };
 
-                // 1. Horizontal (Default)
-                let hFS = Math.min(boxW * paddingFactor / len, boxH * paddingFactor);
-                // Tier 3 必须能看清才有意义，太小就不显示文字
+                // ========== 生成候选布局 ==========
+                // [Fix] 使用 sliceW/sliceH 计算字号（实际可放置区域）
+
+                // 1. 横排 (H) - 默认首选
+                const hFS = Math.min(sliceW * 0.9 / len, sliceH * 0.8);
                 if (hFS >= minFS) {
-                    addLayout('H', hFS, 1.2);
-                    if (hFS * 0.85 >= minFS) addLayout('H', hFS * 0.85, 1.1);
-                }
-
-                // 2. Vertical
-                // 偏好垂直的条件：窄高型区域
-                const ratio = boxH / boxW;
-                const preferVertical = ratio > 2.0;
-
-                let vFS = Math.min(boxW * paddingFactor, boxH * paddingFactor / len);
-                if (vFS >= minFS) {
-                    addLayout('V', vFS, preferVertical ? 1.5 : 1.0);
-                    if (vFS * 0.85 >= minFS) addLayout('V', vFS * 0.85, preferVertical ? 1.4 : 0.9);
-                }
-
-                // 3. Wrap (仅对较长文本)
-                if (len >= 4) {
-                    let cols = Math.ceil(Math.sqrt(len));
-                    if (len >= 6) cols = Math.ceil(len / 2);
-                    let wBase = boxW * paddingFactor / cols;
-                    let hBase = boxH * paddingFactor / (Math.ceil(len / cols));
-                    let wrapFS = Math.min(wBase, hBase);
-                    if (wrapFS >= minFS) {
-                        addLayout('Wrap', wrapFS, 0.9);
-                        if (wrapFS * 0.85 >= minFS) addLayout('Wrap', wrapFS * 0.85, 0.85);
+                    let hScore = preferHorizontal ? 1.4 : (horizontalWontFit ? 0.6 : 1.2);
+                    addLayout('H', hFS, hScore);
+                    if (hFS * 0.85 >= minFS) {
+                        addLayout('H', hFS * 0.85, hScore * 0.9);
                     }
                 }
 
-                // 如果没有合法的，强制塞一个最小的 H 供 fallback (score 很低)
-                if (candidates.length === 0) {
-                    candidates.push({ type: 'H', fs: minFS, w: minFS * len, h: minFS, scoreMult: 0.1 });
+                // 2. 竖排 (V) - 窄高型区域首选
+                const vFS = Math.min(sliceW * 0.8, sliceH * 0.9 / len);
+                if (vFS >= minFS) {
+                    let vScore = preferVertical ? 1.6 : 0.8;
+
+                    // 强制竖排的情况给最高分
+                    if (mustBeVertical) {
+                        vScore = 2.0;
+                    }
+                    // 短名称 + 偏好竖排
+                    else if (len >= 2 && len <= 5 && preferVertical) {
+                        vScore = 1.9;
+                    }
+                    addLayout('V', vFS, vScore);
+                    if (vFS * 0.85 >= minFS) {
+                        addLayout('V', vFS * 0.85, vScore * 0.9);
+                    }
                 }
 
+                // 3. 横排两行 (H2) - 仅对4字及以上名称
+                if (len >= 4) {
+                    const row1Len = Math.ceil(len / 2);
+                    const h2FS = Math.min(sliceW * 0.9 / row1Len, sliceH * 0.4);
+                    if (h2FS >= minFS) {
+                        // H2 评分逻辑：
+                        // - 横排单行会溢出 → H2 优先 (1.6)
+                        // - 宽扁型区域 → H2 适合 (1.3)
+                        // - 其他情况 → 低优先级 (0.85)
+                        let h2Score = 0.85;
+                        if (horizontalWontFit && len >= 4) {
+                            h2Score = 1.6;  // 横排溢出时，H2 成为首选
+                        } else if (isWideShort && len >= 4) {
+                            h2Score = 1.3;  // 宽扁区域也适合 H2
+                        }
+                        addLayout('H2', h2FS, h2Score);
+                        if (h2FS * 0.85 >= minFS) {
+                            addLayout('H2', h2FS * 0.85, h2Score * 0.9);
+                        }
+                        // [Fix] 增加更小字号选项，在有碰撞时使用
+                        if (h2FS * 0.7 >= minFS) {
+                            addLayout('H2', h2FS * 0.7, h2Score * 0.75);
+                        }
+                    }
+                }
+
+                // [Fix] 为 H 和 V 也增加 0.7 倍字号选项
+                if (hFS * 0.7 >= minFS) {
+                    addLayout('H', hFS * 0.7, 0.7);
+                }
+                if (vFS * 0.7 >= minFS) {
+                    addLayout('V', vFS * 0.7, 0.7);
+                }
+
+                // ========== Fallback ==========
+                if (candidates.length === 0) {
+                    // 如果没有合法候选，强制添加一个最小的
+                    candidates.push({
+                        type: preferVertical ? 'V' : 'H',
+                        fs: minFS,
+                        w: preferVertical ? minFS : minFS * len,
+                        h: preferVertical ? minFS * len : minFS,
+                        scoreMult: 0.1
+                    });
+                }
+
+                // 按评分排序（字号 × 评分系数）
                 candidates.sort((a, b) => (b.fs * b.scoreMult) - (a.fs * a.scoreMult));
                 return candidates;
             },
 
             /**
-             * 计算最终布局
+             * [v2.0] Step 4: 计算最终布局
+             * 改进点：
+             * - 为每个政权计算 BoundingBox
+             * - 将 bbox 传递给 generateCandidates
+             * - 添加边界约束检查：标签不能超出 bbox
              */
             computeAll(regimeGroups, regionIndexMap, colWidth, zoom) {
                 if (!this.index) this.init();
                 this.index.clear();
 
-                const processed = [];
+                const results = [];
 
-                // 1. Calculate ideal centers from visual slices logic
+                // 1. 收集所有政权及其位置信息
                 const allItems = [];
                 regimeGroups.forEach(g => {
                     const positions = Core.logic.calculateLabelPositions(g, regionIndexMap, colWidth);
+
                     positions.forEach(p => {
-                        allItems.push({ group: g, pos: p });
+                        // 使用 cluster 的联合边界框（用于方向偏好和字号判断）
+                        const cb = p.clusterBounds;
+                        const clusterBbox = {
+                            x: cb.minX,
+                            y: (cb.minY - APP_CONFIG.minYear) * zoom,
+                            w: cb.maxX - cb.minX,
+                            h: (cb.maxY - cb.minY) * zoom
+                        };
+
+                        allItems.push({
+                            group: g,
+                            pos: p,
+                            bbox: clusterBbox,
+                            bestSlice: p.bestSlice  // 保留 bestSlice 供后续验证
+                        });
                     });
                 });
 
-                // 2. Sort by Tier (1 -> 2 -> 3) then Area
-                // 这样高优先级的先占坑
+                // 2. 按 Tier 优先级 + 面积排序（Tier 1 先占坑）
                 allItems.sort((a, b) => {
                     const tA = parseInt(a.group.explicitTier) || 3;
                     const tB = parseInt(b.group.explicitTier) || 3;
-                    if (tA !== tB) return tA - tB; // Tier 1 < Tier 3? No, we prioritize Tier 1.
-                    // Tier 1 is highest priority. So tA < tB means a comes first.
+                    if (tA !== tB) return tA - tB;
                     return b.pos.area - a.pos.area;
                 });
 
-                const results = [];
-
-                // 3. Placement Loop
+                // 3. 放置循环
                 allItems.forEach(item => {
-                    const { group, pos } = item;
+                    const { group, pos, bbox, bestSlice } = item;
                     const tier = parseInt(group.explicitTier) || 3;
 
-                    // 获取候选布局 (字号/方向)
-                    const layouts = this.generateCandidates(group, pos, colWidth);
+                    // 获取候选布局
+                    // [Fix] 传入 bestSlice，用于更精确的字号计算
+                    const layouts = this.generateCandidates(group, bbox, pos, bestSlice, zoom);
 
                     let bestPlacement = null;
                     let bestScore = -Infinity;
 
-                    // 定义尝试的位置偏移量 (相对中心点)
-                    // Tier 1 尝试更多位置
+                    // 定义尝试的位置偏移量
                     let offsets = [{ x: 0, y: 0 }];
 
-                    // 仅在字号较小时尝试微调，大字号还是居中好
-                    const boxH = pos.h * zoom;
-
-                    // 如果高度足够，允许上下浮动
-                    if (boxH > 40 || tier <= 2) {
-                        offsets.push({ x: 0, y: -boxH * 0.25 });
-                        offsets.push({ x: 0, y: boxH * 0.25 });
+                    // 根据边界框高度决定偏移范围
+                    if (bbox.h > 40 || tier <= 2) {
+                        offsets.push({ x: 0, y: -bbox.h * 0.2 });
+                        offsets.push({ x: 0, y: bbox.h * 0.2 });
                     }
-                    if (tier >= 3) {
-                        // Tier 3 额外尝试
-                        offsets.push({ x: 0, y: -boxH * 0.4 });
-                        offsets.push({ x: 0, y: boxH * 0.4 });
+                    if (tier >= 3 && bbox.h > 60) {
+                        offsets.push({ x: 0, y: -bbox.h * 0.35 });
+                        offsets.push({ x: 0, y: bbox.h * 0.35 });
                     }
 
-                    // 遍历所有 布局 x 位置 组合
+                    // 遍历所有 布局 × 位置 组合
                     for (let layout of layouts) {
                         for (let off of offsets) {
-                            // 计算绝对坐标
-                            // pos.x/y 是物理中心点
+                            // 计算标签中心点坐标
                             const boxY = (pos.y - APP_CONFIG.minYear) * zoom;
-                            const centerX = pos.x + off.x;
-                            const centerY = boxY + off.y;
+                            let centerX = pos.x + off.x;
+                            let centerY = boxY + off.y;
+
+                            // [Fix] 强制中心点在 bbox 内部
+                            // 如果加权中心跑到 bbox 外面，强制拉回来
+                            const bboxCenterX = bbox.x + bbox.w / 2;
+                            const bboxCenterY = bbox.y + bbox.h / 2;
+
+                            if (centerX < bbox.x || centerX > bbox.x + bbox.w) {
+                                centerX = bboxCenterX;  // 使用 bbox 中心
+                            }
+                            if (centerY < bbox.y || centerY > bbox.y + bbox.h) {
+                                centerY = bboxCenterY;  // 使用 bbox 中心
+                            }
 
                             const w = layout.w;
                             const h = layout.h;
 
-                            // 物理碰撞箱 (收缩 15%)
-                            // 这样视觉上文字可能轻微接触，但不会重叠
-                            const hitW = w * 0.85;
-                            const hitH = h * 0.85;
+                            // ========== [Fix] 严格化边界约束检查 ==========
+                            // 标签的边界
+                            const labelLeft = centerX - w / 2;
+                            const labelRight = centerX + w / 2;
+                            const labelTop = centerY - h / 2;
+                            const labelBottom = centerY + h / 2;
 
+                            // [Fix] 检查是否超出政权边界框（容差改为0）
+                            const exceedsLeft = labelLeft < bbox.x;
+                            const exceedsRight = labelRight > bbox.x + bbox.w;
+                            const exceedsTop = labelTop < bbox.y;
+                            const exceedsBottom = labelBottom > bbox.y + bbox.h;
+
+                            // [Fix] 任何方向超出都要惩罚，1个方向严重超出就跳过
+                            const exceedsCount = [exceedsLeft, exceedsRight, exceedsTop, exceedsBottom].filter(Boolean).length;
+
+                            // 计算超出量
+                            const overflowLeft = exceedsLeft ? (bbox.x - labelLeft) : 0;
+                            const overflowRight = exceedsRight ? (labelRight - bbox.x - bbox.w) : 0;
+                            const overflowTop = exceedsTop ? (bbox.y - labelTop) : 0;
+                            const overflowBottom = exceedsBottom ? (labelBottom - bbox.y - bbox.h) : 0;
+                            const maxOverflow = Math.max(overflowLeft, overflowRight, overflowTop, overflowBottom);
+
+                            // [Fix v2] 放宽边界检查：允许更多溢出
+                            // 如果超出量大于标签尺寸的 50%，跳过
+                            if (maxOverflow > Math.min(w, h) * 0.5) {
+                                continue;
+                            }
+                            // 如果三个及以上方向超出，跳过
+                            if (exceedsCount >= 3) {
+                                continue;
+                            }
+
+                            // [Fix] 碰撞箱只收缩 5%，避免视觉重叠
+                            const hitW = w * 0.95;
+                            const hitH = h * 0.95;
                             const rect = {
                                 x: centerX - hitW / 2,
                                 y: centerY - hitH / 2,
@@ -1088,19 +1309,21 @@
 
                             // 碰撞检测
                             const conflicts = this.index.query(rect);
+                            if (conflicts.length > 0) {
+                                continue;  // 有碰撞，跳过
+                            }
 
-                            // 评分逻辑
-                            // 1. 基础分: 字号大小 * 类型偏好
+                            // 计算评分
                             let score = layout.fs * layout.scoreMult;
 
-                            // 2. 偏移惩罚 (越远分越低)
+                            // 偏移惩罚
                             if (off.y !== 0) score *= 0.9;
 
-                            // 3. 碰撞惩罚
-                            if (conflicts.length > 0) {
-                                // 严重碰撞直接 pass
-                                // 未来可选：允许 Tier 1 覆盖 Tier 3 (通过检查 conflicts 内 items 的 tier)
-                                continue;
+                            // [Fix] 边界超出惩罚（根据溢出量动态降分）
+                            if (exceedsCount >= 1) {
+                                // 溢出量越大，惩罚越重
+                                const overflowRatio = maxOverflow / Math.min(w, h);
+                                score *= Math.max(0.3, 1 - overflowRatio * 2);
                             }
 
                             if (score > bestScore) {
@@ -1109,29 +1332,93 @@
                                     layout,
                                     x: centerX,
                                     y: centerY,
-                                    rect
+                                    rect,
+                                    bbox  // 保存 bbox 供调试
                                 };
                             }
                         }
-                        // 如果在当前 fontsize 找到了无碰撞位置，通常就是最优解之一
+                        // 找到足够好的位置就停止
                         if (bestPlacement && bestScore > 10) break;
                     }
 
                     if (bestPlacement) {
-                        // 注册碰撞箱，携带 metadata
+                        // [Fix] 强制标签位置在 bbox 内
+                        let finalX = bestPlacement.x;
+                        let finalY = bestPlacement.y;
+                        const lw = bestPlacement.layout.w;
+                        const lh = bestPlacement.layout.h;
+
+                        // Clamp 标签中心，确保标签不超出 bbox
+                        const minX = bbox.x + lw / 2;
+                        const maxX = bbox.x + bbox.w - lw / 2;
+                        const minY = bbox.y + lh / 2;
+                        const maxY = bbox.y + bbox.h - lh / 2;
+
+                        if (maxX > minX) {
+                            finalX = Math.max(minX, Math.min(maxX, finalX));
+                        } else {
+                            finalX = bbox.x + bbox.w / 2;
+                        }
+                        if (maxY > minY) {
+                            finalY = Math.max(minY, Math.min(maxY, finalY));
+                        } else {
+                            finalY = bbox.y + bbox.h / 2;
+                        }
+
+                        // [Fix] 验证标签中心是否在政权的实际片段上
+                        // 如果不在，则移动到 bestSlice 的中心
+                        const slices = group.visualSlices || [];
+                        const labelCenterY_year = (finalY / zoom) + APP_CONFIG.minYear;
+                        const labelCenterX_col = finalX / colWidth;  // 转换为列坐标
+
+                        let isOnValidSlice = false;
+                        for (const slice of slices) {
+                            const sliceLeft = slice.cIdx + slice.left;
+                            const sliceRight = sliceLeft + slice.w;
+                            const inX = labelCenterX_col >= sliceLeft && labelCenterX_col <= sliceRight;
+                            const inY = labelCenterY_year >= slice.start && labelCenterY_year <= slice.end;
+                            if (inX && inY) {
+                                isOnValidSlice = true;
+                                break;
+                            }
+                        }
+
+                        if (!isOnValidSlice && item.bestSlice) {
+                            // 标签不在有效片段上，移动到 bestSlice 中心
+                            const bs = item.bestSlice;
+                            finalX = bs.x;  // bestSlice 的中心 X（像素）
+                            finalY = (bs.y - APP_CONFIG.minYear) * zoom;  // 年份转像素
+                        }
+
+                        bestPlacement.x = finalX;
+                        bestPlacement.y = finalY;
+
+                        // 注册碰撞箱
                         bestPlacement.rect.tier = tier;
                         this.index.insert(bestPlacement.rect);
+                        // [DEBUG] 输出最终放置信息
+                        if (['安东都护府', '吐蕃王朝'].includes(group.name)) {
+                            console.log(`[DEBUG] ${group.name} 放置:`, {
+                                bbox: { x: bbox.x.toFixed(0), y: bbox.y.toFixed(0), w: bbox.w.toFixed(0), h: bbox.h.toFixed(0) },
+                                原始pos: { x: pos.x.toFixed(0), y: pos.y.toFixed(0) },
+                                最终位置: { x: finalX.toFixed(0), y: finalY.toFixed(0) },
+                                isOnValidSlice,
+                                布局: { type: bestPlacement.layout.type, w: lw.toFixed(0), h: lh.toFixed(0) }
+                            });
+                        }
+
                         results.push({
                             group,
                             ...bestPlacement
                         });
                     } else {
-                        // Failed to place label -> Dot fallback
+                        // 放置失败 → 降级为圆点
                         results.push({
                             group,
                             failed: true,
                             x: pos.x,
-                            y: (pos.y - APP_CONFIG.minYear) * zoom
+                            y: (pos.y - APP_CONFIG.minYear) * zoom,
+                            bbox  // 保存 bbox 供调试
                         });
                     }
                 });
@@ -1975,12 +2262,31 @@
                             for (let j = 0; j < frags.length; j++) {
                                 if (processed.has(j)) continue;
                                 const cand = frags[j];
+
+                                // 同一列 + 时间接触
                                 const sameCol = (cand.cIdx === curr.cIdx);
                                 const timeTouch = (cand.start <= curr.end + 5) && (cand.end >= curr.start - 5);
+
+                                // 相邻列 + 时间重叠 + [Fix] 水平方向真正接触
                                 const neighborCol = Math.abs(cand.cIdx - curr.cIdx) === 1;
                                 const timeOverlap = (cand.start < curr.end) && (cand.end > curr.start);
 
-                                if ((sameCol && timeTouch) || (neighborCol && timeOverlap)) {
+                                // [Fix] 检查水平方向是否真正接触
+                                // 使用实际的 X 坐标范围检查是否有接触或重叠
+                                let horizontalTouch = false;
+                                if (neighborCol && timeOverlap) {
+                                    // 计算两个片段的实际 X 坐标范围
+                                    const currLeft = curr.cIdx + curr.left;
+                                    const currRight = curr.cIdx + curr.left + curr.w;
+                                    const candLeft = cand.cIdx + cand.left;
+                                    const candRight = cand.cIdx + cand.left + cand.w;
+
+                                    // 两个范围接触或重叠：一个的右边界 >= 另一个的左边界
+                                    // 允许 0.05 的容差
+                                    horizontalTouch = (currRight >= candLeft - 0.05) && (candRight >= currLeft - 0.05);
+                                }
+
+                                if ((sameCol && timeTouch) || (neighborCol && timeOverlap && horizontalTouch)) {
                                     currentCluster.push(cand);
                                     processed.add(j);
                                     queue.push(cand);
@@ -2016,12 +2322,119 @@
                             maxTime = Math.max(maxTime, f.end);
                             minC = Math.min(minC, f.cIdx);
                             maxC = Math.max(maxC, f.cIdx);
-
-                            if (area > maxSliceArea) {
-                                maxSliceArea = area;
-                                bestSlice = { x: physCenterX, y: physCenterY, w: f.w * colWidth, h: h };
-                            }
                         });
+
+                        // [Fix v2] 计算"最佳放置区域"：考虑水平相邻片段的合并
+                        // 采样多个时间点，计算每个时间点的合并宽度
+                        const sampleCount = 10;
+                        const timeStep = (maxTime - minTime) / sampleCount;
+
+                        for (let i = 0; i <= sampleCount; i++) {
+                            const sampleYear = minTime + i * timeStep;
+
+                            // 找出在这个时间点存在的所有片段
+                            const activeSlices = cluster.filter(f =>
+                                f.start <= sampleYear && f.end >= sampleYear
+                            );
+
+                            if (activeSlices.length === 0) continue;
+
+                            // [Fix v3] 将活跃片段按水平连接分组
+                            // 只有真正水平接触的片段才在同一组
+                            const groups = [];
+                            const used = new Set();
+
+                            activeSlices.forEach((slice, idx) => {
+                                if (used.has(idx)) return;
+
+                                // 开始一个新的连接组
+                                const group = [slice];
+                                used.add(idx);
+
+                                // BFS 找出所有与当前片段水平连接的片段
+                                const queue = [slice];
+                                while (queue.length > 0) {
+                                    const curr = queue.shift();
+                                    const currLeft = curr.cIdx + curr.left;
+                                    const currRight = currLeft + curr.w;
+
+                                    activeSlices.forEach((cand, candIdx) => {
+                                        if (used.has(candIdx)) return;
+                                        const candLeft = cand.cIdx + cand.left;
+                                        const candRight = candLeft + cand.w;
+
+                                        // 检查是否水平接触（有重叠或紧邻）
+                                        const touches = (currRight >= candLeft - 0.05) && (candRight >= currLeft - 0.05);
+                                        if (touches) {
+                                            group.push(cand);
+                                            used.add(candIdx);
+                                            queue.push(cand);
+                                        }
+                                    });
+                                }
+
+                                groups.push(group);
+                            });
+
+                            // 对每个连接组计算面积，选择最大的
+                            groups.forEach(group => {
+                                // 计算该组的合并边界
+                                let groupLeft = Infinity, groupRight = -Infinity;
+                                group.forEach(f => {
+                                    const left = f.cIdx + f.left;
+                                    const right = left + f.w;
+                                    groupLeft = Math.min(groupLeft, left);
+                                    groupRight = Math.max(groupRight, right);
+                                });
+
+                                const groupWidth = groupRight - groupLeft;
+
+                                // 计算该组的公共时间范围
+                                let commonStart = -Infinity, commonEnd = Infinity;
+                                group.forEach(f => {
+                                    commonStart = Math.max(commonStart, f.start);
+                                    commonEnd = Math.min(commonEnd, f.end);
+                                });
+                                const commonDuration = Math.max(0, commonEnd - commonStart);
+
+                                // 评分 = 宽度 × √时间跨度
+                                const score = groupWidth * Math.sqrt(commonDuration);
+
+                                if (score > maxSliceArea) {
+                                    maxSliceArea = score;
+
+                                    // [Fix] 使用该组片段的面积加权中心（X 和 Y）
+                                    let weightedCenterX = 0;
+                                    let weightedCenterY = 0;
+                                    let totalGroupArea = 0;
+                                    group.forEach(f => {
+                                        const sliceCenterX = f.cIdx + f.left + f.w / 2;
+                                        const sliceCenterY = (f.start + f.end) / 2;  // 片段的时间中点
+                                        const sliceArea = f.w * f.dur;  // 使用片段自身的时间跨度
+                                        weightedCenterX += sliceCenterX * sliceArea;
+                                        weightedCenterY += sliceCenterY * sliceArea;
+                                        totalGroupArea += sliceArea;
+                                    });
+                                    const centerX = totalGroupArea > 0
+                                        ? (weightedCenterX / totalGroupArea) * colWidth
+                                        : (groupLeft + groupWidth / 2) * colWidth;
+                                    const centerY = totalGroupArea > 0
+                                        ? (weightedCenterY / totalGroupArea)
+                                        : (commonStart + commonEnd) / 2;
+
+                                    bestSlice = {
+                                        x: centerX,
+                                        y: centerY,  // 使用加权中心 Y
+                                        w: groupWidth * colWidth,
+                                        h: commonDuration,
+                                        left: groupLeft * colWidth,
+                                        right: groupRight * colWidth,
+                                        top: commonStart,
+                                        bottom: commonEnd
+                                    };
+                                }
+                            });
+                        }
 
                         if (totalArea === 0) return null;
 
@@ -2032,6 +2445,21 @@
                         const boundingWidthPx = (maxC - minC + 1) * colWidth;
                         const colSpan = maxC - minC + 1;
 
+                        // [Fix] 计算这个 cluster 的精确边界框（像素坐标）
+                        // 而不是整个政权的联合边界框
+                        let clusterMinX = Infinity, clusterMaxX = -Infinity;
+                        let clusterMinY = Infinity, clusterMaxY = -Infinity;
+
+                        cluster.forEach(f => {
+                            const left = (f.cIdx + f.left) * colWidth;
+                            const right = left + f.w * colWidth;
+                            clusterMinX = Math.min(clusterMinX, left);
+                            clusterMaxX = Math.max(clusterMaxX, right);
+                            // 注意：这里的 Y 是年份，需要在使用时转换为像素
+                            clusterMinY = Math.min(clusterMinY, f.start);
+                            clusterMaxY = Math.max(clusterMaxY, f.end);
+                        });
+
                         return {
                             x: finalX,
                             y: finalY,
@@ -2040,7 +2468,14 @@
                             fullW: boundingWidthPx,
                             colSpan: colSpan,
                             h: fullHeight,
-                            area: totalArea
+                            area: totalArea,
+                            // [Fix] 添加 cluster 的边界框（注意 Y 是年份）
+                            clusterBounds: {
+                                minX: clusterMinX,
+                                maxX: clusterMaxX,
+                                minY: clusterMinY,  // 年份
+                                maxY: clusterMaxY   // 年份
+                            }
                         };
                     }).filter(r => r !== null);
 
@@ -2321,25 +2756,48 @@
 
                             let label = document.createElement('div');
                             let layoutClass = '';
-                            if (layout.type === 'V') layoutClass = 'vertical-text';
-                            if (layout.type === 'Wrap') layoutClass = 'label-wrap';
+
+                            // [v2.0] 根据布局类型设置 CSS 类
+                            if (layout.type === 'V') {
+                                layoutClass = 'vertical-text';
+                            } else if (layout.type === 'H2') {
+                                layoutClass = 'label-h2';  // 新增：两行布局
+                            }
 
                             label.className = `era-label label-tier-${tier} ${group.groupId} ${layoutClass}`;
-                            label.innerText = group.name;
+
+                            // [v2.0] H2 类型：将名称拆分为两行
+                            if (layout.type === 'H2') {
+                                const name = group.name;
+                                const midPoint = Math.ceil(name.length / 2);
+                                const line1 = name.substring(0, midPoint);
+                                const line2 = name.substring(midPoint);
+                                label.innerHTML = `<span>${line1}</span><span>${line2}</span>`;
+                            } else {
+                                label.innerText = group.name;
+                            }
 
                             // 居中定位
+                            // [DEBUG] 渲染层调试
+                            if (['安东都护府', '吐蕃王朝'].includes(group.name)) {
+                                console.log(`[RENDER] ${group.name}:`, { x, y, bbox: item.bbox });
+                            }
                             label.style.left = x + 'px';
                             label.style.top = y + 'px';
 
-                            // 宽度处理 (Wrap 需要固定宽，H/V 自动)
-                            const finalW = (layout.type === 'Wrap') ? layout.w : 'auto';
-                            label.style.width = (typeof finalW === 'number') ? (finalW + 'px') : finalW;
+                            // 宽度处理
+                            if (layout.type === 'H2') {
+                                label.style.width = layout.w + 'px';
+                            } else if (layout.type === 'H') {
+                                label.style.whiteSpace = 'nowrap';
+                            }
 
                             label.style.fontSize = layout.fs + 'px';
-                            label.style.lineHeight = '1'; // 紧凑行高
+                            label.style.lineHeight = (layout.type === 'H2') ? '1.2' : '1';
 
-                            if (layout.type === 'H') label.style.whiteSpace = 'nowrap';
-                            if (Core.state.selectedRegimeId === group.regimeId) label.classList.add('is-focused'); // [Refactor] 使用 group.regimeId 比较
+                            if (Core.state.selectedRegimeId === group.regimeId) {
+                                label.classList.add('is-focused');
+                            }
 
                             labelsFrag.appendChild(label);
                         }
