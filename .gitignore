@@ -1,2 +1,17 @@
+# === 系统文件 ===
 .DS_Store
+*.swp
+*.swo
+*~
+
+# === 本地备份 ===
 _backups/
+
+# === 开发工具（本地使用，不需要同步） ===
+dev.sh
+*.command
+.agent/
+
+# === 可选：大型数据文件（如果需要排除） ===
+# layout.json
+# china.json
