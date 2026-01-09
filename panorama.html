@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全景页 v11.06</title>
+    <title>全景页 v11.07</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.07.002';
+        window.APP_VERSION = '2026.01.10.001';
     </script>
 
     <!-- [Unified CSS] Native Style (Merged) -->
@@ -996,26 +996,37 @@
 
                 const candidates = [];
 
-                // [Fix v4] 字号计算基准：
+                // [Fix v5] 字号计算基准：
                 // - Tier 1：使用 bestSlice 和 bbox 的混合（60%）
-                // - Tier 2：使用 bestSlice 为主（更保守）
-                // - Tier 3：使用 bestSlice（实际片段）
+                // - Tier 2：使用 bestSlice 为主（40%）
+                // - Tier 3：
+                //   - 如果 bbox 较宽（跨越多列），使用混合计算（30%）
+                //   - 否则直接使用 bestSlice
                 let sliceW, sliceH;
                 const bsW = bestSlice ? bestSlice.w : bbox.w;
                 const bsH = bestSlice ? (bestSlice.h * zoom) : bbox.h;
+                const colWidth = pos.colWidth || 24;  // 列宽
 
                 if (tier === 1) {
                     // 大朝代：使用 bestSlice 和 bbox 的混合（至少 60% bbox）
                     sliceW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.6));
                     sliceH = Math.min(bbox.h, Math.max(bsH, bbox.h * 0.6));
                 } else if (tier === 2) {
-                    // 中等政权：以 bestSlice 为主，但允许适度放大（最多到 bbox 的 40%）
+                    // 中等政权：以 bestSlice 为主（至少 40% bbox）
                     sliceW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.4));
                     sliceH = Math.min(bbox.h, Math.max(bsH, bbox.h * 0.4));
                 } else {
-                    // 小政权：直接使用 bestSlice
-                    sliceW = bsW;
-                    sliceH = bsH;
+                    // Tier 3：检查是否是"宽 bbox"的情况
+                    const isWideBbox = bbox.w >= colWidth * 3;  // 跨越 3 列以上
+                    if (isWideBbox) {
+                        // 宽 bbox 的 Tier 3：使用混合计算（至少 30% bbox）
+                        sliceW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.3));
+                        sliceH = Math.min(bbox.h, Math.max(bsH, bbox.h * 0.3));
+                    } else {
+                        // 普通 Tier 3：直接使用 bestSlice
+                        sliceW = bsW;
+                        sliceH = bsH;
+                    }
                 }
 
                 // 但仍使用 bbox 来判断整体的方向偏好
@@ -1397,7 +1408,7 @@
                         bestPlacement.rect.tier = tier;
                         this.index.insert(bestPlacement.rect);
                         // [DEBUG] 输出最终放置信息
-                        if (['安东都护府', '吐蕃王朝'].includes(group.name)) {
+                        if (['察合台', '安东都护府', '吐蕃王朝'].includes(group.name)) {
                             console.log(`[DEBUG] ${group.name} 放置:`, {
                                 bbox: { x: bbox.x.toFixed(0), y: bbox.y.toFixed(0), w: bbox.w.toFixed(0), h: bbox.h.toFixed(0) },
                                 原始pos: { x: pos.x.toFixed(0), y: pos.y.toFixed(0) },
