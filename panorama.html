@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全景页 v11.07</title>
+    <title>全景页 v11.08</title>
 
     <!-- 🔑 全局版本控制 -->
     <script>
-        window.APP_VERSION = '2026.01.10.001';
+        window.APP_VERSION = '2026.01.11.001';
     </script>
 
     <!-- [Unified CSS] Native Style (Merged) -->
@@ -996,58 +996,84 @@
 
                 const candidates = [];
 
-                // [Fix v5] 字号计算基准：
-                // - Tier 1：使用 bestSlice 和 bbox 的混合（60%）
-                // - Tier 2：使用 bestSlice 为主（40%）
-                // - Tier 3：
-                //   - 如果 bbox 较宽（跨越多列），使用混合计算（30%）
-                //   - 否则直接使用 bestSlice
-                let sliceW, sliceH;
-                const bsW = bestSlice ? bestSlice.w : bbox.w;
-                const bsH = bestSlice ? (bestSlice.h * zoom) : bbox.h;
-                const colWidth = pos.colWidth || 24;  // 列宽
-
-                if (tier === 1) {
-                    // 大朝代：使用 bestSlice 和 bbox 的混合（至少 60% bbox）
-                    sliceW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.6));
-                    sliceH = Math.min(bbox.h, Math.max(bsH, bbox.h * 0.6));
-                } else if (tier === 2) {
-                    // 中等政权：以 bestSlice 为主（至少 40% bbox）
-                    sliceW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.4));
-                    sliceH = Math.min(bbox.h, Math.max(bsH, bbox.h * 0.4));
-                } else {
-                    // Tier 3：检查是否是"宽 bbox"的情况
-                    const isWideBbox = bbox.w >= colWidth * 3;  // 跨越 3 列以上
-                    if (isWideBbox) {
-                        // 宽 bbox 的 Tier 3：使用混合计算（至少 30% bbox）
-                        sliceW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.3));
-                        sliceH = Math.min(bbox.h, Math.max(bsH, bbox.h * 0.3));
-                    } else {
-                        // 普通 Tier 3：直接使用 bestSlice
-                        sliceW = bsW;
-                        sliceH = bsH;
-                    }
+                // [Fix] 方案 A：严格限制跨列标签的高度
+                // 0. 构建列高度查找表 (用于后续计算公共高度)
+                const colYMap = new Map();
+                if (group.visualSlices) {
+                    group.visualSlices.forEach(s => {
+                        const top = (s.start - APP_CONFIG.minYear) * zoom;
+                        const bottom = (s.end - APP_CONFIG.minYear) * zoom;
+                        if (!colYMap.has(s.colIdx) || (bottom - top) > (colYMap.get(s.colIdx).bottom - colYMap.get(s.colIdx).top)) {
+                            colYMap.set(s.colIdx, { top, bottom });
+                        }
+                    });
                 }
 
-                // 但仍使用 bbox 来判断整体的方向偏好
-                const boxW = bbox.w;
-                const boxH = bbox.h;
+                // 辅助函数：计算指定跨度下的最大安全高度
+                const getSafeHeightForWidth = (targetW, centerCol) => {
+                    const halfCols = (targetW / 2) / colWidth;
+                    const startCol = Math.floor(centerCol - halfCols);
+                    const endCol = Math.ceil(centerCol + halfCols);
+                    let commonTop = -Infinity, commonBottom = Infinity, coveredCols = 0;
+
+                    for (let c = startCol; c <= endCol; c++) {
+                        if (colYMap.has(c)) {
+                            const range = colYMap.get(c);
+                            commonTop = Math.max(commonTop, range.top);
+                            commonBottom = Math.min(commonBottom, range.bottom);
+                            coveredCols++;
+                        } else { return 0; } // 断开
+                    }
+                    if (coveredCols === 0 || commonTop >= commonBottom) return 0;
+                    return commonBottom - commonTop;
+                };
+
+                const bsW = bestSlice ? bestSlice.w : bbox.w;
+                const bsH = bestSlice ? (bestSlice.h * zoom) : bbox.h;
+                const colWidth = pos.colWidth || 24;
+
+                let baseW = bsW;
+                let baseH = bsH;
+
+                // 允许尝试计算由 bbox 带来的理论最大宽度（Tier 1/2）
+                // 但最终会被 safeHeight 否决
+                if (tier === 1) {
+                    baseW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.6));
+                } else if (tier === 2) {
+                    baseW = Math.min(bbox.w, Math.max(bsW, bbox.w * 0.4));
+                }
+
+                // 兼容旧变量名，供后续逻辑使用
+                let sliceW = baseW;
+                let sliceH = baseH;
+
+                // [Fix] 核心修正：对于 Tier 1/2，必须强行提升 sliceH 的基础值
+                // 增加宽度校验：只有 > 3 列宽的主体才享受此待遇，防止小碎片（如秦飞地）被放大
+                if (bbox.w > colWidth * 3) {
+                    if (tier === 1) sliceH = Math.max(sliceH, 40);
+                    else if (tier === 2) sliceH = Math.max(sliceH, 30);
+                }
+
+                // [Fix v7] 使用 sliceW/sliceH 来判断方向偏好
+                // 因为 bbox 可能包含空白区域，导致比例失真
+                const boxW = sliceW;  // 使用实际可放置区域的宽度
+                const boxH = sliceH;  // 使用实际可放置区域的高度
 
                 // ========== 方向偏好判断 ==========
                 const ratio = boxH / boxW;
 
-                // [Fix] 降低竖排阈值：ratio > 1.0 就偏好竖排（更敏感）
-                const isNarrowTall = ratio > 1.0;
+                // [Fix] 降低竖排阈值：ratio > 1.5 才偏好竖排（区域明显高于宽）
+                const isNarrowTall = ratio > 1.5;
 
-                // 强制竖排条件：非常窄高 (ratio > 2.0)
-                const mustBeVertical = ratio > 2.0;
+                // 强制竖排条件：非常窄高 (ratio > 2.5)
+                const mustBeVertical = ratio > 2.5;
 
                 // 条件2: 色块宽度太窄，横排放不下
-                const minHorizontalWidth = len * minFS * 0.9;  // [Fix] 提高阈值
+                const minHorizontalWidth = len * minFS * 0.9;
                 const horizontalWontFit = boxW < minHorizontalWidth;
 
-                // 条件3: 色块宽度很宽，适合横排
-                const isWideShort = ratio < 0.6;  // [Fix] 更严格
+                // 条件3: 色块宽度很宽，适合横排（ratio < 0.8 表示宽扁区域）
+                const isWideShort = ratio < 0.8;
 
                 // 综合判断偏好方向
                 const preferVertical = isNarrowTall || horizontalWontFit || mustBeVertical;
@@ -1103,12 +1129,39 @@
                 // [Fix] 使用 sliceW/sliceH 计算字号（实际可放置区域）
 
                 // 1. 横排 (H) - 默认首选
-                const hFS = Math.min(sliceW * 0.9 / len, sliceH * 0.8);
+                // 先基于理论宽度算一个字号
+                let hFS = Math.min(sliceW * 0.9 / len, sliceH * 0.8);
+
+                // [CRITICAL FIX] 校验该字号对应的宽度，在高度上是否安全
                 if (hFS >= minFS) {
-                    let hScore = preferHorizontal ? 1.4 : (horizontalWontFit ? 0.6 : 1.2);
-                    addLayout('H', hFS, hScore);
-                    if (hFS * 0.85 >= minFS) {
-                        addLayout('H', hFS * 0.85, hScore * 0.9);
+                    const estW = hFS * len;
+                    const centerCol = bestSlice ? (bestSlice.colIdx + bestSlice.colspan / 2) : (pos.col || 0);
+
+                    // 计算在此宽度下的公共安全高度
+                    let safeH = getSafeHeightForWidth(estW, centerCol);
+                    // [Fix] 仅对主体部分给予最小高度保障
+                    if (bbox.w > colWidth * 3) {
+                        if (tier === 1) safeH = Math.max(safeH, 30);
+                        else if (tier === 2) safeH = Math.max(safeH, 20);
+                    }
+
+                    // [Fix] 系数调整：Tier 1 给予极大豁免 (3.0)，防止因局部狭窄而惩罚整体
+                    const safeLimitMult = (tier === 1) ? 3.0 : 1.5;
+                    const constrainedFS = Math.min(hFS, safeH * safeLimitMult);
+
+                    if (constrainedFS >= minFS) {
+                        // 使用修正后的安全字号
+                        let hScore = preferHorizontal ? 1.4 : (horizontalWontFit ? 0.6 : 1.2);
+                        addLayout('H', constrainedFS, hScore);
+                        if (constrainedFS * 0.85 >= minFS) {
+                            addLayout('H', constrainedFS * 0.85, hScore * 0.9);
+                        }
+                    } else {
+                        // 跨列失败，退回到仅基于 bestSlice (单列) 尝试
+                        const singleColFS = Math.min(bsW * 0.9 / len, bsH * 0.8);
+                        if (singleColFS >= minFS) {
+                            addLayout('H', singleColFS, 1.0);
+                        }
                     }
                 }
 
@@ -1134,35 +1187,50 @@
                 // 3. 横排两行 (H2) - 仅对4字及以上名称
                 if (len >= 4) {
                     const row1Len = Math.ceil(len / 2);
-                    const h2FS = Math.min(sliceW * 0.9 / row1Len, sliceH * 0.4);
+                    let h2FS = Math.min(sliceW * 0.9 / row1Len, sliceH * 0.4);
+
                     if (h2FS >= minFS) {
-                        // H2 评分逻辑：
-                        // - 横排单行会溢出 → H2 优先 (1.6)
-                        // - 宽扁型区域 → H2 适合 (1.3)
-                        // - 其他情况 → 低优先级 (0.85)
+                        const estW = h2FS * row1Len;
+                        const centerCol = bestSlice ? (bestSlice.colIdx + bestSlice.colspan / 2) : 0;
+                        let safeH = getSafeHeightForWidth(estW, centerCol);
+                        // [Fix] 仅对主体部分给予最小高度保障
+                        if (bbox.w > colWidth * 3) {
+                            if (tier === 1) safeH = Math.max(safeH, 30);
+                            else if (tier === 2) safeH = Math.max(safeH, 20);
+                        }
+
+                        // 对双行布局，safeH 约束更严（因为有两行）
+                        const constrainedH2FS = Math.min(h2FS, safeH * 1.3 * 0.45); // 放宽至 1.3 倍
+
                         let h2Score = 0.85;
-                        if (horizontalWontFit && len >= 4) {
-                            h2Score = 1.6;  // 横排溢出时，H2 成为首选
-                        } else if (isWideShort && len >= 4) {
-                            h2Score = 1.3;  // 宽扁区域也适合 H2
-                        }
-                        addLayout('H2', h2FS, h2Score);
-                        if (h2FS * 0.85 >= minFS) {
-                            addLayout('H2', h2FS * 0.85, h2Score * 0.9);
-                        }
-                        // [Fix] 增加更小字号选项，在有碰撞时使用
-                        if (h2FS * 0.7 >= minFS) {
-                            addLayout('H2', h2FS * 0.7, h2Score * 0.75);
+                        if (horizontalWontFit) h2Score = 1.6;
+                        else if (isWideShort) h2Score = 1.3;
+
+                        if (constrainedH2FS >= minFS) {
+                            addLayout('H2', constrainedH2FS, h2Score);
+                            if (constrainedH2FS * 0.85 >= minFS) {
+                                addLayout('H2', constrainedH2FS * 0.85, h2Score * 0.9);
+                            }
+                        } else {
+                            // Fallback to single col H2
+                            const singleColH2FS = Math.min(bsW * 0.9 / row1Len, bsH * 0.45);
+                            if (singleColH2FS >= minFS) {
+                                addLayout('H2', singleColH2FS, 0.9);
+                            }
                         }
                     }
                 }
 
-                // [Fix] 为 H 和 V 也增加 0.7 倍字号选项
-                if (hFS * 0.7 >= minFS) {
-                    addLayout('H', hFS * 0.7, 0.7);
-                }
-                if (vFS * 0.7 >= minFS) {
-                    addLayout('V', vFS * 0.7, 0.7);
+                // [Fix] 为所有类型增加更小字号选项 (0.7x)，在碰撞激烈时使用
+                // 注意：这里需要基于 constrained 的结果，但由于上文变量作用域限制，我们简单基于 minFS 再次尝试
+                // 为了简单有效，我们只对已经生成的 candidates 进行缩小衍生
+                const currentCount = candidates.length;
+                for (let i = 0; i < currentCount; i++) {
+                    const c = candidates[i];
+                    if (c.fs * 0.7 >= minFS) {
+                        // 降低分数，作为备选
+                        addLayout(c.type, c.fs * 0.7, c.scoreMult * 0.6);
+                    }
                 }
 
                 // ========== Fallback ==========
@@ -1197,6 +1265,7 @@
 
                 // 1. 收集所有政权及其位置信息
                 const allItems = [];
+
                 regimeGroups.forEach(g => {
                     const positions = Core.logic.calculateLabelPositions(g, regionIndexMap, colWidth);
 
@@ -1255,21 +1324,30 @@
                     // 遍历所有 布局 × 位置 组合
                     for (let layout of layouts) {
                         for (let off of offsets) {
-                            // 计算标签中心点坐标
-                            const boxY = (pos.y - APP_CONFIG.minYear) * zoom;
-                            let centerX = pos.x + off.x;
-                            let centerY = boxY + off.y;
+                            // [Fix v6] 优先使用 bestSlice 中心而不是 cluster 加权中心
+                            // 这确保标签放在最大的连续色块上，而不是整个政权的几何中心
+                            let centerX, centerY;
 
-                            // [Fix] 强制中心点在 bbox 内部
-                            // 如果加权中心跑到 bbox 外面，强制拉回来
+                            if (bestSlice) {
+                                // 使用 bestSlice 的中心（已经是像素坐标）
+                                centerX = bestSlice.x + off.x;
+                                centerY = ((bestSlice.y - APP_CONFIG.minYear) * zoom) + off.y;
+                            } else {
+                                // Fallback: 使用 cluster 的加权中心
+                                const boxY = (pos.y - APP_CONFIG.minYear) * zoom;
+                                centerX = pos.x + off.x;
+                                centerY = boxY + off.y;
+                            }
+
+                            // [Fix] 如果中心点跑到 bbox 外面，使用 bestSlice 中心或 bbox 中心
                             const bboxCenterX = bbox.x + bbox.w / 2;
                             const bboxCenterY = bbox.y + bbox.h / 2;
 
                             if (centerX < bbox.x || centerX > bbox.x + bbox.w) {
-                                centerX = bboxCenterX;  // 使用 bbox 中心
+                                centerX = bestSlice ? bestSlice.x : bboxCenterX;
                             }
                             if (centerY < bbox.y || centerY > bbox.y + bbox.h) {
-                                centerY = bboxCenterY;  // 使用 bbox 中心
+                                centerY = bestSlice ? ((bestSlice.y - APP_CONFIG.minYear) * zoom) : bboxCenterY;
                             }
 
                             const w = layout.w;
@@ -1368,37 +1446,104 @@
                         if (maxX > minX) {
                             finalX = Math.max(minX, Math.min(maxX, finalX));
                         } else {
-                            finalX = bbox.x + bbox.w / 2;
+                            // [Fix v6] 标签太大放不下，优先使用 bestSlice 中心
+                            finalX = bestSlice ? bestSlice.x : (bbox.x + bbox.w / 2);
                         }
                         if (maxY > minY) {
                             finalY = Math.max(minY, Math.min(maxY, finalY));
                         } else {
-                            finalY = bbox.y + bbox.h / 2;
+                            // [Fix v6] 标签太高放不下，优先使用 bestSlice 中心
+                            finalY = bestSlice ? ((bestSlice.y - APP_CONFIG.minYear) * zoom) : (bbox.y + bbox.h / 2);
                         }
 
-                        // [Fix] 验证标签中心是否在政权的实际片段上
-                        // 如果不在，则移动到 bestSlice 的中心
+                        // [Fix v8] 验证标签是否完全在政权的有效片段内
+                        // 考虑标签的完整尺寸，不仅仅是中心点
                         const slices = group.visualSlices || [];
-                        const labelCenterY_year = (finalY / zoom) + APP_CONFIG.minYear;
-                        const labelCenterX_col = finalX / colWidth;  // 转换为列坐标
+                        const labelHalfH_year = (lh / 2) / zoom;  // 标签高度的一半（年份单位）
+                        const labelHalfW_col = (lw / 2) / colWidth;  // 标签宽度的一半（列单位）
 
-                        let isOnValidSlice = false;
+                        const labelCenterY_year = (finalY / zoom) + APP_CONFIG.minYear;
+                        const labelCenterX_col = finalX / colWidth;
+
+                        // 计算标签的完整边界（年份/列坐标）
+                        const labelTop_year = labelCenterY_year - labelHalfH_year;
+                        const labelBottom_year = labelCenterY_year + labelHalfH_year;
+                        const labelLeft_col = labelCenterX_col - labelHalfW_col;
+                        const labelRight_col = labelCenterX_col + labelHalfW_col;
+
+                        // 检查是否有片段能完全容纳标签
+                        let isFullyContained = false;
+                        let bestContainingSlice = null;
+                        let maxContainment = 0;
+
                         for (const slice of slices) {
                             const sliceLeft = slice.cIdx + slice.left;
                             const sliceRight = sliceLeft + slice.w;
-                            const inX = labelCenterX_col >= sliceLeft && labelCenterX_col <= sliceRight;
-                            const inY = labelCenterY_year >= slice.start && labelCenterY_year <= slice.end;
-                            if (inX && inY) {
-                                isOnValidSlice = true;
+                            const sliceTop = slice.start;
+                            const sliceBottom = slice.end;
+
+                            // 检查 X 方向是否包含
+                            const containsX = labelLeft_col >= sliceLeft && labelRight_col <= sliceRight;
+                            // 检查 Y 方向是否包含
+                            const containsY = labelTop_year >= sliceTop && labelBottom_year <= sliceBottom;
+
+                            if (containsX && containsY) {
+                                isFullyContained = true;
                                 break;
+                            }
+
+                            // 计算包含程度（用于找最佳调整目标）
+                            if (containsX) {
+                                // X 方向 OK，计算 Y 方向的包含程度
+                                const sliceHeight = sliceBottom - sliceTop;
+                                if (sliceHeight > maxContainment) {
+                                    maxContainment = sliceHeight;
+                                    bestContainingSlice = slice;
+                                }
                             }
                         }
 
+                        let isOnValidSlice = isFullyContained;
+
+                        // [Fix v8] 如果标签没有完全包含在任何片段内，尝试调整 Y 位置
+                        if (!isFullyContained && bestContainingSlice) {
+                            const slice = bestContainingSlice;
+                            const sliceTop = slice.start;
+                            const sliceBottom = slice.end;
+
+                            // 计算能让标签完全在片段内的 Y 范围
+                            const validYMin_year = sliceTop + labelHalfH_year;
+                            const validYMax_year = sliceBottom - labelHalfH_year;
+
+                            if (validYMax_year >= validYMin_year) {
+                                // 有足够空间容纳标签，调整 Y 到有效范围内
+                                let adjustedY_year = labelCenterY_year;
+                                if (adjustedY_year < validYMin_year) {
+                                    adjustedY_year = validYMin_year;  // 下移
+                                } else if (adjustedY_year > validYMax_year) {
+                                    adjustedY_year = validYMax_year;  // 上移
+                                }
+                                finalY = (adjustedY_year - APP_CONFIG.minYear) * zoom;
+                                isOnValidSlice = true;
+                            }
+                        }
+
+                        // 如果仍然不在有效位置，使用 bestSlice 中心
                         if (!isOnValidSlice && item.bestSlice) {
-                            // 标签不在有效片段上，移动到 bestSlice 中心
                             const bs = item.bestSlice;
-                            finalX = bs.x;  // bestSlice 的中心 X（像素）
-                            finalY = (bs.y - APP_CONFIG.minYear) * zoom;  // 年份转像素
+                            finalX = bs.x;
+                            // [Fix v8] 也要确保 bestSlice 中心能容纳标签
+                            const bsValidYMin = bs.top + labelHalfH_year;
+                            const bsValidYMax = bs.bottom - labelHalfH_year;
+                            if (bsValidYMax >= bsValidYMin) {
+                                // 调整到 bestSlice 能容纳标签的位置
+                                let bsY = bs.y;
+                                if (bsY < bsValidYMin) bsY = bsValidYMin;
+                                else if (bsY > bsValidYMax) bsY = bsValidYMax;
+                                finalY = (bsY - APP_CONFIG.minYear) * zoom;
+                            } else {
+                                finalY = (bs.y - APP_CONFIG.minYear) * zoom;
+                            }
                         }
 
                         bestPlacement.x = finalX;
@@ -1407,17 +1552,6 @@
                         // 注册碰撞箱
                         bestPlacement.rect.tier = tier;
                         this.index.insert(bestPlacement.rect);
-                        // [DEBUG] 输出最终放置信息
-                        if (['察合台', '安东都护府', '吐蕃王朝'].includes(group.name)) {
-                            console.log(`[DEBUG] ${group.name} 放置:`, {
-                                bbox: { x: bbox.x.toFixed(0), y: bbox.y.toFixed(0), w: bbox.w.toFixed(0), h: bbox.h.toFixed(0) },
-                                原始pos: { x: pos.x.toFixed(0), y: pos.y.toFixed(0) },
-                                最终位置: { x: finalX.toFixed(0), y: finalY.toFixed(0) },
-                                isOnValidSlice,
-                                布局: { type: bestPlacement.layout.type, w: lw.toFixed(0), h: lh.toFixed(0) }
-                            });
-                        }
-
                         results.push({
                             group,
                             ...bestPlacement
@@ -1484,11 +1618,9 @@
 
                         // [New v10] 保存预计算数据
                         if (layout) {
-                            console.log('[Panorama] Layout data received');
                             this.state.layoutData = layout; // 包含 colOrder
                         }
                         if (sliceData) {
-                            console.log('[Panorama] Slice data received');
                             this.state.sliceData = sliceData;
                         }
 
@@ -2138,8 +2270,31 @@
                 applyFixedLayout: function (rawRegions) {
                     let sorted = [];
                     if (Core.state.layoutData && Core.state.layoutData.colOrder) {
+                        const colOrder = Core.state.layoutData.colOrder;
                         const orderMap = {};
-                        Core.state.layoutData.colOrder.forEach((id, i) => orderMap[id] = i);
+                        colOrder.forEach((id, i) => orderMap[id] = i);
+
+                        // [Fix v8] 智能处理 colOrder 中缺失的区域
+                        // 根据数字 ID 找到相邻位置插入，而不是放到最后
+                        const missingRegions = rawRegions.filter(r => orderMap[r.id] === undefined);
+                        if (missingRegions.length > 0) {
+                            console.warn(`[Layout] ${missingRegions.length} 个区域不在 colOrder 中:`, missingRegions.map(r => r.id));
+                            // 为缺失区域计算插入位置
+                            missingRegions.forEach(region => {
+                                const regionIdNum = parseInt(region.id);
+                                // 找到 colOrder 中第一个比当前 ID 大的位置
+                                let insertRank = colOrder.length;
+                                for (let i = 0; i < colOrder.length; i++) {
+                                    if (parseInt(colOrder[i]) > regionIdNum) {
+                                        insertRank = i;
+                                        break;
+                                    }
+                                }
+                                // 使用小数作为 rank，确保插入到正确位置
+                                orderMap[region.id] = insertRank - 0.5;
+                            });
+                        }
+
                         sorted = rawRegions.slice().sort((a, b) => {
                             const rA = orderMap[a.id] !== undefined ? orderMap[a.id] : 9999;
                             const rB = orderMap[b.id] !== undefined ? orderMap[b.id] : 9999;
@@ -2791,7 +2946,7 @@
                             // 居中定位
                             // [DEBUG] 渲染层调试
                             if (['安东都护府', '吐蕃王朝'].includes(group.name)) {
-                                console.log(`[RENDER] ${group.name}:`, { x, y, bbox: item.bbox });
+
                             }
                             label.style.left = x + 'px';
                             label.style.top = y + 'px';

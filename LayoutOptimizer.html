@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>布局优化器 v11.02</title>
+    <title>布局优化器 v11.03</title>
 
     <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
     <script>
-        window.APP_VERSION = '2026.01.07.001';
+        window.APP_VERSION = '2026.01.11.001';
         window.APP_CONFIG = {
             // CDN Fallback URLs
             CDN_REACT: 'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
@@ -505,32 +505,57 @@
                     const newRegionSet = new Set(regionList);
                     const oldRegionSet = new Set(currentOrder);
 
-                    // 校验逻辑：只有当两个集合元素完全一致时，才保留布局
-                    const isSameRegions = currentOrder.length > 0 &&
-                        newRegionSet.size === oldRegionSet.size &&
-                        [...newRegionSet].every(x => oldRegionSet.has(x));
+                    // [Fix v2] 改进校验逻辑：支持新增/删除区域的兼容合并
+                    // 1. 找出新增的区域（CSV 有但 layout.json 没有）
+                    // 2. 找出删除的区域（layout.json 有但 CSV 没有）
+                    const addedRegions = regionList.filter(id => !oldRegionSet.has(id));
+                    const removedRegions = currentOrder.filter(id => !newRegionSet.has(id));
 
-                    if (isSameRegions) {
+                    // 判断是否可以复用旧布局（至少有一半区域匹配）
+                    const matchedCount = currentOrder.filter(id => newRegionSet.has(id)).length;
+                    const canReuse = currentOrder.length > 0 && matchedCount >= Math.min(newRegionSet.size, oldRegionSet.size) / 2;
+
+                    if (canReuse) {
                         try {
-                            addLog("检测到地区一致，保留现有列顺序模具。");
-                            // 既然一致，就强制应用这个顺序
-                            if (preloadedColOrder) setColOrder(preloadedColOrder);
+                            // 过滤掉已删除的区域
+                            let mergedOrder = currentOrder.filter(id => newRegionSet.has(id));
+
+                            // 智能插入新增区域：根据数字 ID 找到相邻位置
+                            if (addedRegions.length > 0) {
+                                addLog(`检测到 ${addedRegions.length} 个新增地区: ${addedRegions.join(', ')}`);
+                                addedRegions.forEach(newId => {
+                                    const newIdNum = parseInt(newId);
+                                    // 找到第一个比 newId 大的位置
+                                    let insertIdx = mergedOrder.length;
+                                    for (let i = 0; i < mergedOrder.length; i++) {
+                                        const existingNum = parseInt(mergedOrder[i]);
+                                        if (existingNum > newIdNum) {
+                                            insertIdx = i;
+                                            break;
+                                        }
+                                    }
+                                    mergedOrder.splice(insertIdx, 0, newId);
+                                });
+                            }
+                            if (removedRegions.length > 0) {
+                                addLog(`已移除 ${removedRegions.length} 个不存在的地区: ${removedRegions.join(', ')}`);
+                            }
+
+                            addLog(`地区模具合并完成 (保留:${matchedCount}, 新增:${addedRegions.length}, 移除:${removedRegions.length})`);
+                            setColOrder(mergedOrder);
 
                             if (currentMasterSeqs) {
                                 addLog("尝试应用现有主序列表到新数据...");
-                                // [Migrated] 直接更新状态，分数组计算交由 Worker (calculateQuickScores)
                                 setMasterSeqs(currentMasterSeqs);
-                                // Fix: Pass explicit data because state is not yet updated
                                 const newLayout = generateCellLayout(currentMasterSeqs, { regions: regionList, grid });
                                 setCellLayout(newLayout);
                                 addLog(`布局加载完毕 (分数将在后台计算)`);
                             } else {
-                                // Default Init
                                 const initLayout = {};
-                                currentOrder.forEach(id => {
+                                mergedOrder.forEach(id => {
                                     initLayout[id] = {};
                                     for (let y = CONFIG.MIN_YEAR; y <= CONFIG.MAX_YEAR; y++) {
-                                        const s = grid[id][y];
+                                        const s = grid[id]?.[y];
                                         initLayout[id][y] = s ? Array.from(s).sort() : [];
                                     }
                                 });
@@ -539,19 +564,19 @@
                         } catch (e) {
                             addLog(`[Error] 应用布局失败: ${e.message}`);
                             console.error(e);
-                            // Fallback to reset
                             setColOrder(regionList);
                             setMasterSeqs({});
                             setCellLayout({});
                         }
                     } else {
-                        addLog(`地区模具不匹配 (原:${oldRegionSet.size}, 新:${newRegionSet.size})，重置布局。`);
+                        addLog(`地区模具差异过大 (匹配:${matchedCount}/${newRegionSet.size})，重置布局。`);
                         setColOrder(regionList);
                         setMasterSeqs({});
                         setCellLayout({});
                     }
-                    const finalOrder = isSameRegions ? (preloadedColOrder || currentOrder) : regionList;
-                    const finalSeqs = isSameRegions ? currentMasterSeqs : null;
+                    // [Fix] 使用合并后的顺序计算分数
+                    const finalOrder = canReuse ? currentOrder.filter(id => newRegionSet.has(id)).concat(addedRegions) : regionList;
+                    const finalSeqs = canReuse ? currentMasterSeqs : null;
 
                     // [New] Calc Scores
                     calculateQuickScores(grid, finalOrder, finalSeqs);
@@ -962,6 +987,58 @@
             const visibleColIndices = [];
             for (let i = colStartIdx; i < colEndIdx; i++) visibleColIndices.push(i);
 
+            // [Util] RLE Compression for Layout Data
+            const compressLayout = (layout) => {
+                const compressed = {};
+                for (const rid in layout) {
+                    const years = Object.keys(layout[rid]).map(Number).sort((a, b) => a - b);
+                    if (years.length === 0) continue;
+
+                    const runs = [];
+                    let start = years[0];
+                    let prevJson = JSON.stringify(layout[rid][start]);
+                    let prevYear = start;
+
+                    for (let i = 1; i < years.length; i++) {
+                        const year = years[i];
+                        const currJson = JSON.stringify(layout[rid][year]);
+
+                        // Check continuity (year + 1) and content equality
+                        if (year === prevYear + 1 && currJson === prevJson) {
+                            prevYear = year;
+                        } else {
+                            // Push run: [start, end, content]
+                            runs.push([start, prevYear, JSON.parse(prevJson)]);
+                            start = year;
+                            prevYear = year;
+                            prevJson = currJson;
+                        }
+                    }
+                    // Push last run
+                    runs.push([start, prevYear, JSON.parse(prevJson)]);
+                    compressed[rid] = runs;
+                }
+                return compressed;
+            };
+
+            const expandLayout = (data) => {
+                const layout = {};
+                for (const rid in data) {
+                    layout[rid] = {};
+                    if (Array.isArray(data[rid])) {
+                        // RLE Compressed Format
+                        for (const run of data[rid]) {
+                            const [s, e, content] = run;
+                            for (let y = s; y <= e; y++) layout[rid][y] = content;
+                        }
+                    } else {
+                        // Legacy Full Format
+                        layout[rid] = data[rid];
+                    }
+                }
+                return layout;
+            };
+
             const exportJSON = () => {
                 // [v10] 生成版本号 YYYYMMDDHHmmss
                 const now = new Date();
@@ -972,29 +1049,42 @@
                     String(now.getMinutes()).padStart(2, '0') +
                     String(now.getSeconds()).padStart(2, '0');
 
+                // [Fix] 使用 RLE 压缩 layout 数据以减小文件体积
+                addLog("[System] 正在压缩布局数据 (RLE)...");
+                const compressedLayout = compressLayout(cellLayout);
+
                 const out = {
-                    version,  // 版本号，用于客户端缓存策略
+                    version,  // 版本号
                     colOrder,
-                    layout: cellLayout,
+                    layout: compressedLayout, // 压缩后的数据
                     names: data.names,
                     masterSeqs: masterSeqs,
-                    tspScore: tspBestScore
+                    tspScore: tspBestScore,
+                    isCompressed: true // 标记位，方便识别（虽然可以通过结构判断）
                 };
+
+                const jsonStr = JSON.stringify(out);
+                const originalSize = JSON.stringify(cellLayout).length;
+                const newSize = JSON.stringify(compressedLayout).length;
+                addLog(`[Export] 压缩完成: ${(originalSize / 1024 / 1024).toFixed(2)}MB -> ${(newSize / 1024 / 1024).toFixed(2)}MB`);
                 console.log(`[Export] layout.json with version: ${version}`);
-                const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
+
+                const blob = new Blob([jsonStr], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url; a.download = 'layout.json'; a.click();
             };
-            // [New] 根据视角使用不同 ID
-            const saveToDB = () => {
+            // [New] 基于 LocalStorage 的统一缓存策略
+            const saveToLocalStorage = () => {
                 if (!data || !cellLayout) return;
 
                 const perspective = data.perspective || "default";
-                // [Fix] Panorama reads 'current' by default. Match that behavior.
-                const layoutId = perspective === "default" ? "current" : `layout_${perspective}`;
+                // 仅支持缓存 current / default 视角，避免 LS 爆炸
+                if (perspective !== "default") {
+                    addLog("[System] 仅默认视角的布局可以保存到缓存供 index.html 读取。");
+                }
 
-                // [v10] 生成版本号用于 DB 存储
+                // [v10] 生成版本号 YYYYMMDDHHmmss
                 const now = new Date();
                 const version = now.getFullYear().toString() +
                     String(now.getMonth() + 1).padStart(2, '0') +
@@ -1003,80 +1093,65 @@
                     String(now.getMinutes()).padStart(2, '0') +
                     String(now.getSeconds()).padStart(2, '0');
 
-                // [v10] Payload now includes version
+                // [Fix] 压缩数据以适应 LocalStorage (RLE)
+                addLog("[System] 正在压缩数据 (RLE)...");
+                const compressedLayout = compressLayout(cellLayout);
+                const originalSize = JSON.stringify(cellLayout).length;
+                const newSize = JSON.stringify(compressedLayout).length;
+                addLog(`[Cache] 压缩完成: ${(originalSize / 1024 / 1024).toFixed(2)}MB -> ${(newSize / 1024 / 1024).toFixed(2)}MB`);
+
                 const payload = {
                     version,  // 版本号
                     names: data.names,
                     codes: data.codes,
                     masterSeqs: masterSeqs,
-                    layout: cellLayout,
+                    layout: compressedLayout, // 压缩版
                     colOrder: colOrder,
                     grid: data.grid,
                     perspective: perspective,
                     timestamp: Date.now()
                 };
 
-                // [Fix] Explicitly use version 5 to trigger schema upgrade for users who possess legacy DB
-                const request = indexedDB.open("EastAsiaHistoryDB", 5);
+                try {
+                    const jsonStr = JSON.stringify(payload);
+                    localStorage.setItem("layout_cache", jsonStr);
 
-                request.onupgradeneeded = function (event) {
-                    const db = event.target.result;
-                    if (!db.objectStoreNames.contains("layouts")) {
-                        db.createObjectStore("layouts", { keyPath: "id" });
+                    addLog(`[System] ✅ 已保存到 LocalStorage (v${version})`);
+                    if (confirm(`布局已保存到缓存！\n版本: ${version}\n刷新主地图页面即可生效。`)) {
+                        window.location.href = "index.html?view=panorama&t=" + Date.now();
                     }
-                };
+                } catch (e) {
+                    if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+                        addLog("[Warning] 缓存空间不足，尝试自动清理旧数据...");
 
-                request.onsuccess = function (event) {
-                    const db = event.target.result;
-                    const transaction = db.transaction(["layouts"], "readwrite");
-                    const store = transaction.objectStore("layouts");
+                        // 1. 尝试删除可能的旧 Key
+                        const keysToRemove = ['csvOriginalContent', 'csv_backup', 'layout_backup', 'temp_layout'];
+                        let clearedCount = 0;
+                        keysToRemove.forEach(k => {
+                            if (localStorage.getItem(k)) {
+                                localStorage.removeItem(k);
+                                clearedCount++;
+                            }
+                        });
 
-                    // [CRITICAL] Panorama expects DB entry to be { id: "current", data: payload }
-                    // Wraps the payload in a 'data' property.
-
-                    // 1. Save strictly as 'current' (This is what Panorama reads)
-                    const entryCurrent = { id: 'current', data: payload };
-                    store.put(entryCurrent);
-
-                    // 2. Save as specific ID (if different)
-                    if (layoutId !== 'current') {
-                        const entrySpecific = { id: layoutId, data: payload };
-                        store.put(entrySpecific);
+                        // 2. 重试写入
+                        try {
+                            localStorage.setItem("layout_cache", JSON.stringify(payload));
+                            addLog(`[System] ✅ 清理后保存成功！(清理了 ${clearedCount} 个旧项目)`);
+                            if (confirm(`布局已保存到缓存！(已自动清理旧空间)\n版本: ${version}\n刷新主地图页面即可生效。`)) {
+                                window.location.href = "index.html?view=panorama&t=" + Date.now();
+                            }
+                            return;
+                        } catch (retryErr) {
+                            console.error("Retry failed", retryErr);
+                            addLog(`[Error] 清理后依然无法保存 (剩余空间可能仍不足): ${retryErr.message}`);
+                            alert("缓存空间严重不足！\n\n即使清理了旧数据也无法保存。\n建议：\n1. 点击“导出 JSON”手动保存文件。\n2. 手动在控制台运行 localStorage.clear()。");
+                        }
+                    } else {
+                        addLog(`[Error] 保存到 LocalStorage 失败: ${e.message}`);
+                        console.error("LS Error", e);
                     }
-
-                    transaction.oncomplete = function () {
-                        // [Debug] Verify persistence
-                        const verifyReq = indexedDB.open("EastAsiaHistoryDB");
-                        verifyReq.onsuccess = (ev) => {
-                            const db2 = ev.target.result;
-                            const tx2 = db2.transaction(["layouts"], "readonly");
-                            const st2 = tx2.objectStore("layouts");
-                            const get2 = st2.get("current");
-                            get2.onsuccess = () => {
-                                if (get2.result && get2.result.data && get2.result.data.layout) {
-                                    addLog(`[System] ✅ 成功写入 DB 并通过自检 (ID: current)`);
-                                    if (confirm(`布局已保存为 [${layoutId}]！\n是否跳转到全景图查看？`)) {
-                                        // [Fix] 跳转到 index.html 而非 panorama.html，因为单独的 panorama.html 无法正常工作
-                                        window.location.href = "index.html?view=panorama&t=" + Date.now();
-                                    }
-                                } else {
-                                    alert("❌ 严重错误：写入后的数据结构不符合预期！");
-                                    console.error("Verification failed. Result:", get2.result);
-                                }
-                            };
-                        };
-                    };
-
-                    transaction.onerror = function (e) {
-                        addLog(`[Error] DB 事务失败: ${e.target.error}`);
-                        console.error("Transaction Error", e);
-                    }
-                };
-
-                request.onerror = function (event) {
-                    console.error("IndexedDB Error", event);
-                    alert("无法打开 IndexedDB");
-                };
+                }
             };
 
             const runFlip = () => { handleFlip(); }; // Wrap handleFlip
@@ -1126,7 +1201,7 @@
                                 disabled: !data,
                                 title: "手动微调"
                             }, interactionMode !== 'idle' ? '❌ 取消' : '🛠️ 修改序列'),
-                            h('button', { onClick: saveToDB, className: "btn bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/20 border-0", disabled: !data, title: "保存到 DB" }, "💾 写入 DB"),
+                            h('button', { onClick: saveToLocalStorage, className: "btn bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/20 border-0", disabled: !data, title: "存入 LocalStorage 供测试" }, "💾 存入缓存"),
                             h('button', { onClick: exportJSON, className: "btn bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600", disabled: !data, title: "导出 JSON" }, "📤 导出"),
                             h('a', { href: "index.html", className: "btn bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600/50", title: "返回首页" }, "🏠")
                         )

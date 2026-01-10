@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>东亚历史交互地图 v5.06</title>
+    <title>东亚历史交互地图 v5.07</title>
 
     <!-- 🔑 全局版本控制 - 修改此值强制刷新所有缓存 -->
     <script>
-        window.APP_VERSION = '2026.01.10.001';
+        window.APP_VERSION = '2026.01.11.001';
         window.APP_CONFIG = {
             // 缓存版本检查
             checkCache: function () {
@@ -1038,7 +1038,7 @@
                 rawData: null,
                 framesReady: { map: false, panorama: false },
                 apiKey: "",
-                features: { antique: true, borders: false, connections: true }
+                features: { antique: true, borders: true, connections: true }
             },
 
             // === 状态管理核心（单向数据流）===
@@ -1452,65 +1452,94 @@
             // [New] 简易 Hash (与 LayoutOptimizer 保持一致)
             simpleHash: (str) => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h) + str.charCodeAt(i); return (h >>> 0).toString(36); },
 
-            // [Optimized] 加载 Layout 并校验一致性 (支持回调以确保顺序)
+            // [Optimized] 加载 Layout 并校验一致性 (LocalCache vs RemoteJSON)
             loadAndCheckLayout: function (currentCsvHash, callback) {
-                let loaded = false;
-                try {
-                    // [Fix] 不指定版本号，打开当前最新版本，防止因 optimizer 升级版本导致 index.html 无法打开
-                    const req = indexedDB.open("EastAsiaHistoryDB");
-                    req.onerror = (e) => {
-                        console.warn("❌ DB Open Failed:", e.target.error);
-                        if (callback) callback();
-                    };
-                    req.onsuccess = (e) => {
-                        const db = e.target.result;
-                        if (!db.objectStoreNames.contains("layouts")) { tryFallback(); return; }
-                        const tx = db.transaction("layouts", "readonly");
-                        const store = tx.objectStore("layouts");
-                        const getReq = store.get("current");
-                        getReq.onsuccess = () => {
-                            const rec = getReq.result;
-                            if (rec && rec.data) {
-                                // 1. 保存到 State
-                                this.state.layoutData = rec.data;
-                                console.log("✅ Layout loaded from DB");
-
-                                // 2. 校验 Hash
-                                if (currentCsvHash && rec.data.dataHash && rec.data.dataHash !== currentCsvHash) {
-                                    this.showDesyncAlert();
-                                }
-                                if (callback) callback();
-                            } else {
-                                // DB 为空，尝试 Fallback
-                                tryFallback();
-                            }
-                        };
-                        getReq.onerror = () => tryFallback();
-                    };
-                } catch (e) {
-                    console.warn("IndexDB check failed", e);
-                    tryFallback();
-                }
-
-                // 嵌套定义的 Fallback 函数
                 const _this = this;
-                function tryFallback() {
-                    console.log("[Layout] DB miss, trying layout.json...");
-                    fetch('layout.json?' + Date.now()) // 避免 HTTP 缓存
-                        .then(res => {
-                            if (!res.ok) throw new Error("404");
-                            return res.json();
-                        })
-                        .then(data => {
-                            _this.state.layoutData = data;
-                            console.log("✅ Layout loaded from JSON file");
-                            if (callback) callback();
-                        })
-                        .catch(err => {
-                            console.warn("❌ Layout load failed completely:", err);
-                            if (callback) callback();
-                        });
-                }
+
+                // [Util] RLE Decompression helper
+                const expandPayload = (payload) => {
+                    if (!payload || !payload.layout) return payload;
+                    const keys = Object.keys(payload.layout);
+                    // Check if first region value is Array (Compressed) vs Object (Legacy)
+                    if (keys.length > 0 && Array.isArray(payload.layout[keys[0]])) {
+                        console.log("ℹ️ Detect compressed layout, expanding...");
+                        try {
+                            const expanded = {};
+                            for (const rid in payload.layout) {
+                                expanded[rid] = {};
+                                for (const run of payload.layout[rid]) {
+                                    const [s, e, v] = run;
+                                    for (let y = s; y <= e; y++) expanded[rid][y] = v;
+                                }
+                            }
+                            payload.layout = expanded;
+                        } catch (e) { console.error("Expansion failed", e); }
+                    }
+                    return payload;
+                };
+
+                const useLayout = (data, source) => {
+                    if (!data) return;
+                    _this.state.layoutData = expandPayload(data);
+                    console.log(`✅ Layout loaded from [${source}] (v${data.version || 'unknown'})`);
+
+                    // 校验 Hash (可选)
+                    if (currentCsvHash && data.dataHash && data.dataHash !== currentCsvHash) {
+                        _this.showDesyncAlert();
+                    }
+                    if (callback) callback();
+                };
+
+                // 1. Load from LocalStorage
+                const loadLS = () => {
+                    try {
+                        const str = localStorage.getItem("layout_cache");
+                        return str ? JSON.parse(str) : null;
+                    } catch (e) { return null; }
+                };
+
+                // 2. Load from Network
+                const loadNet = async () => {
+                    try {
+                        const res = await fetch('layout.json?' + Date.now()); // Bust cache
+                        if (!res.ok) throw new Error("404");
+                        return await res.json();
+                    } catch (e) { return null; }
+                };
+
+                // 3. Race & Compare Logic
+                (async () => {
+                    const [lsData, netData] = await Promise.all([
+                        Promise.resolve(loadLS()),
+                        loadNet()
+                    ]);
+
+                    if (!lsData && !netData) {
+                        console.error("❌ Fatal: No layout data available");
+                        alert("无法加载布局文件，请检查网络连接。");
+                        if (callback) callback();
+                        return;
+                    }
+
+                    // Case A: 只存在一份数据
+                    if (lsData && !netData) return useLayout(lsData, "LocalStorage (Offline)");
+                    if (!lsData && netData) {
+                        try { localStorage.setItem("layout_cache", JSON.stringify(netData)); } catch (e) { }
+                        return useLayout(netData, "Network (New)");
+                    }
+
+                    // Case B: 两份数据都存在，对比版本
+                    const vLS = lsData.version || "0";
+                    const vNet = netData.version || "0";
+
+                    if (vLS >= vNet) {
+                        useLayout(lsData, "LocalStorage (Preferred)");
+                    } else {
+                        console.log(`🔄 New version detected: ${vLS} -> ${vNet}`);
+                        try { localStorage.setItem("layout_cache", JSON.stringify(netData)); } catch (e) { }
+                        useLayout(netData, "Network (Updated)");
+                    }
+                })();
             },
 
             // [New] 显示 SOP 报警
@@ -1754,7 +1783,9 @@
                         sharedCSS: SHARED_CSS_STYLES,
                         layout: this.state.layoutData,
                         sliceData: this.state.sliceData,
-                        config: { apiKey: this.state.apiKey }
+                        config: { apiKey: this.state.apiKey },
+                        // [Fix] 统一深色边界线，确保同色区块边界清晰
+                        mapBorderStyles: { color: '#666', weight: 1.0, opacity: 0.8 }
                     }
                 };
 
@@ -1772,6 +1803,7 @@
                 const strCode = String(code);
                 let originDigit = '1';
                 let eraDigit = 4;
+                let isRegimeCode = false;
 
                 // [修复] 智能区分 "区域编码"(纯数字 3位) 与 "政权编码"(字母+数字)
                 if (/^\d/.test(strCode)) {
@@ -1779,10 +1811,12 @@
                     originDigit = strCode.charAt(0);
                     // 区域固定色彩，保持中等亮度，避免因第二位 ID 不同导致亮度乱跳
                     eraDigit = 5;
+                    isRegimeCode = false;
                 } else {
                     // Regime Code (e.g. "C11", "T52"): 第三位是区域组
                     originDigit = strCode.length >= 3 ? strCode.charAt(2) : '1';
                     eraDigit = parseInt(strCode.length >= 2 ? strCode.charAt(1) : '4') || 4;
+                    isRegimeCode = true;
                 }
 
                 // 新版 10 大板块色相定义 (v2.82 最终微调版)
@@ -1800,49 +1834,34 @@
                 };
                 const baseHue = hueMap[originDigit] !== undefined ? hueMap[originDigit] : 0;
 
-                // [Enhanced Hash] 混合 Name 和 Code 以产生最大差异
-                let seedStr = code;
-                if (name) seedStr += name;
+                let h = baseHue;
+                let s = 60;
+                let l = 50;
 
-                let hash = 0;
-                for (let i = 0; i < seedStr.length; i++) hash = seedStr.charCodeAt(i) + ((hash << 5) - hash);
-                hash = Math.abs(hash);
+                if (isRegimeCode) {
+                    // [恢复] 政权编码：使用时代深浅 + 哈希跳跃
+                    // 时代深浅：eraDigit 小 = 古代 = 较暗，eraDigit 大 = 近代 = 较亮
+                    l = 35 + eraDigit * 3.5; // 范围约 35% ~ 66%
 
-                // [Perturbation Improved] 
-                // 1. Hue: 双极性偏移 (Bipolar Shift)
-                // 强制偏移量至少为 3 度，范围 [-8, -3] 或 [3, 8]
-                // 默认随机方向
-                let hueDir = (hash % 2 === 0) ? 1 : -1;
-                if (name && /[东前左上]/.test(name)) hueDir = 1;
-                if (name && /[西后右下]/.test(name)) hueDir = -1;
-
-                // 允许 0 度偏移，充分利用 0-8 度空间
-                const hueMag = hash % 9;
-                const hueShift = hueDir * hueMag;
-
-                let h = baseHue + hueShift;
-                if (h < 0) h += 360;
-
-                // 2. Lightness: 基于 Era 基准，叠加 +/- 8% 的随机扰动
-                let baseL = 30 + (eraDigit * 5.0);
-                // 使用不同的位运算混淆hash，减少hue和lightness的相关性
-                const lJitter = ((hash >> 2) % 17) - 8;
-                // [Semantic Override] 语义覆盖：南/东 偏亮，北/西 偏暗
-                let lBias = 0;
-                if (name) {
-                    if (/[南东前]/.test(name)) lBias = 5;
-                    if (/[北西后]/.test(name)) lBias = -5;
+                    // 哈希跳跃：基于 name 生成微小的 hue/saturation 偏移
+                    if (name) {
+                        let hash = 0;
+                        for (let i = 0; i < name.length; i++) {
+                            hash = ((hash << 5) - hash) + name.charCodeAt(i);
+                            hash = hash & hash; // Convert to 32bit integer
+                        }
+                        const hueShift = (Math.abs(hash) % 21) - 10; // -10 to +10
+                        const satShift = (Math.abs(hash >> 8) % 15) - 7; // -7 to +7
+                        h = baseHue + hueShift;
+                        s = Math.max(40, Math.min(75, 55 + satShift));
+                    }
+                } else {
+                    // [保持] 区域编码：固定饱和度和亮度，确保地图颜色一致
+                    // 已在上面设置 s = 60, l = 50
                 }
 
-                let l = Math.max(25, Math.min(80, baseL + lJitter + lBias)); // 放宽上限到 80
-
-                // 3. Saturation: 扰动 +/- 8%
-                const baseSat = 45 + (eraDigit * 5);
-                const satJitter = ((hash >> 4) % 17) - 8; // 右移取另一段 hash 避免相关性
-                let s = Math.max(30, Math.min(95, baseSat + satJitter));
-
                 if (originDigit === '0') return `hsl(0, 0%, ${l}%)`;
-                if (originDigit === '6') { l -= 10; s -= 5; } // 蒙古稍微压暗
+                if (originDigit === '6') { l -= 5; } // 蒙古稍微压暗以配合绿色系
 
                 return `hsl(${h}, ${s}%, ${l}%)`;
             },
@@ -2022,7 +2041,7 @@
                 if (btnA) btnA.innerText = this.state.features.antique ? "📜 仿古已开" : "📜 仿古已关";
 
                 const btnB = document.getElementById('btn-borders');
-                if (btnB) btnB.innerText = this.state.features.borders ? "🗺️ 省界已开" : "🗺️ 省界已关";
+                if (btnB) btnB.innerText = this.state.features.borders ? "🗺️ 国省界已开" : "🗺️ 国省界已关";
 
                 const btnC = document.getElementById('btn-connections');
                 if (btnC) btnC.innerText = this.state.features.connections ? "🔗 纽带已开" : "🔗 纽带已关";
@@ -2128,7 +2147,13 @@
                 document.querySelector('.search-container').classList.remove('active');
                 document.getElementById('search-suggestions').style.display = 'none';
 
-                // 2. 发送指令给所有子页面
+                // 2. 重置内部状态
+                this.state.year = -2070;
+                this.state.selectedRegime = null;
+                this.state.selectedRegimeId = null;
+                this.state.region = null;
+
+                // 3. 发送指令给所有子页面
                 const frames = document.querySelectorAll('iframe');
                 frames.forEach(frame => {
                     if (frame.contentWindow) {
@@ -2136,8 +2161,8 @@
                     }
                 });
 
-                // 3. 提示用户
-                // (可选) alert("系统已复位"); 
+                // 4. 同步状态给子页面
+                this.broadcast('STATE_SYNC');
             },
         };
 
