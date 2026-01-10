@@ -1617,7 +1617,7 @@
                 UICtrl.showToast("🔄 正在加载省界数据...");
 
                 const sources = [
-                    './china.json',
+                    './geo-china.json',
                     'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json'
                 ];
 
@@ -1882,7 +1882,7 @@
                 // Preload province data
                 const controller = new AbortController();
                 setTimeout(() => controller.abort(), 30000);
-                fetch('./china.json', { signal: controller.signal })
+                fetch('./geo-china.json', { signal: controller.signal })
                     .then(r => r.ok ? r.json() : fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json', { mode: 'cors' }).then(r2 => r2.ok ? r2.json() : null))
                     .then(data => {
                         if (data) {
@@ -1904,9 +1904,9 @@
                 this.map.getPane('countryPane').style.zIndex = 460;
                 this.map.getPane('countryPane').style.pointerEvents = 'none';
 
-                // [New] 加载世界国界线 (使用本地 uploaded world.json)
-                // 源地址: world.json (项目根目录)
-                fetch('world.json')
+                // [New] 加载世界国界线 (使用本地 geo-world.json)
+                // 源地址: geo-world.json (项目根目录)
+                fetch('geo-world.json')
                     .then(r => {
                         if (!r.ok) throw new Error("HTTP error " + r.status);
                         return r.json();
@@ -1915,7 +1915,7 @@
                         console.log("✅ World Borders Loaded (Local)", data.features ? data.features.length : 'Invalid');
 
                         // [Filter] 过滤掉中国及港澳台 (多字段匹配)
-                        // 目标：移除 World Layer 中的中国区域，仅保留 china.json 的显示
+                        // 目标：移除 World Layer 中的中国区域，仅保留 geo-china.json 的显示
                         let filteredFeatures = [];
 
                         if (data.features) {
